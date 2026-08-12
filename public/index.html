@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Quản lý Công việc</title>
+<meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%232563eb'/%3E%3Cpath d='M28 52l14 14 30-32' fill='none' stroke='%23fff' stroke-width='11' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f8fafc;
+    --fg: #475569;
+    --muted: #94a3b8;
+    --ring: #e2e8f0;
+    --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f172a; --fg: #cbd5e1; --muted: #64748b; --ring: #1e293b; }
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    /* Khoá scroll của trang bọc: chỉ nội dung bên trong iframe được cuộn,
+       tránh double scrollbar và tránh kéo lệch làm mất phần đầu/cuối app. */
+    overflow: hidden;
+    overscroll-behavior: none;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* position:fixed + inset:0 luôn bằng đúng viewport thật, kể cả khi thanh
+     địa chỉ trên mobile thu/phóng — chuẩn hơn 100vh (bị hụt/thừa trên iOS). */
+  #app {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    display: block;
+  }
+
+  #splash {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    background: var(--bg);
+    color: var(--fg);
+    transition: opacity .35s ease;
+  }
+  #splash.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .spinner {
+    width: 38px;
+    height: 38px;
+    border: 3px solid var(--ring);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .label {
+    font-size: 14px;
+    letter-spacing: .01em;
+  }
+
+  #fallback {
+    display: none;
+    max-width: 300px;
+    text-align: center;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--muted);
+  }
+  #fallback.show { display: block; }
+  #fallback a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  #fallback a:hover { text-decoration: underline; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation-duration: 2s; }
+    #splash { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<iframe
+  id="app"
+  title="Quản lý Công việc"
+  src="https://script.google.com/macros/s/AKfycbxDFmjQz_N4qpui8VlUqLbY-LBfhT7DBVnWQL1G6q3sek9qLH2N4vzzm8GQJL-hCeyD/exec"
+  allow="clipboard-read; clipboard-write; fullscreen"
+  referrerpolicy="no-referrer-when-downgrade"></iframe>
+
+<div id="splash">
+  <div class="spinner"></div>
+  <div class="label">Đang tải…</div>
+  <div id="fallback">
+    Tải lâu hơn bình thường.
+    <a href="https://script.google.com/macros/s/AKfycbxDFmjQz_N4qpui8VlUqLbY-LBfhT7DBVnWQL1G6q3sek9qLH2N4vzzm8GQJL-hCeyD/exec" target="_blank" rel="noopener">Mở trực tiếp</a>
+  </div>
+</div>
+
+<script>
+  var frame = document.getElementById('app');
+  var splash = document.getElementById('splash');
+  var loaded = false;
+
+  frame.addEventListener('load', function () {
+    loaded = true;
+    splash.classList.add('hidden');
+  });
+
+  setTimeout(function () {
+    if (!loaded) document.getElementById('fallback').classList.add('show');
+  }, 12000);
+</script>
+
+</body>
+</html>
