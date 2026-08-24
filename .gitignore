@@ -1,1 +1,4 @@
 .claude/settings.local.json
+
+# clasp OAuth token — tuyệt đối không commit
+.clasprc.json
