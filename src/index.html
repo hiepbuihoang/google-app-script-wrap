@@ -4822,41 +4822,44 @@
                             </div>
                             <div class="form-group">
                                 <label class="form-label">
-                                    Phòng ban <span v-if="modal.data.role !== 'Director'" class="text-red-500">*</span>
-                                    <span v-if="roleAllowsMultiDept(modal.data.role)" class="text-[11px] font-normal text-slate-400">(chọn được nhiều)</span>
+                                    Phòng ban <span class="text-red-500">*</span>
+                                    <span class="text-[11px] font-normal text-slate-400">(chọn được nhiều)</span>
                                 </label>
 
-                                <!-- Giám đốc văn phòng xem toàn bộ nên không cần gán phòng ban -->
-                                <p v-if="modal.data.role === 'Director'" class="text-xs text-slate-400 py-3">
-                                    Giám đốc văn phòng xem toàn bộ phòng ban, không cần gán.
-                                </p>
-
-                                <!-- Manager: chọn nhiều phòng ban -->
-                                <div v-else-if="roleAllowsMultiDept(modal.data.role)"
-                                    class="flex flex-wrap gap-1.5 p-2 rounded-xl border"
-                                    :class="modalErrors.department_id ? 'border-red-400' : 'border-slate-200'">
-                                    <button type="button" v-for="d in data.departments" :key="d.id"
-                                        @click="toggleEmployeeDept(d.id)"
-                                        :class="(modal.data.department_ids || []).indexOf(d.id) > -1 ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
-                                        class="px-3 py-1.5 rounded-lg text-xs font-medium transition">{{ d.name }}</button>
-                                </div>
-
-                                <!-- Teamlead / Nhân viên: 1 phòng ban -->
-                                <div v-else class="relative" @click.stop>
+                                <!-- Select box đa chọn: bấm chọn/bỏ chọn, danh sách không đóng lại -->
+                                <div class="relative" @click.stop>
                                     <button type="button" @click="activeDropdown = activeDropdown === 'dept' ? '' : 'dept'"
-                                        class="form-select flex items-center justify-between text-left w-full select-none"
+                                        class="form-select flex items-center justify-between text-left w-full select-none gap-2"
                                         :class="{'error': modalErrors.department_id}">
-                                        <span>{{ data.departments.find(d => d.id === modal.data.department_id)?.name || '-- Chọn --' }}</span>
+                                        <span class="truncate" :class="selectedDeptNames ? 'text-slate-700' : 'text-slate-400'">
+                                            {{ selectedDeptNames || '-- Chọn --' }}
+                                        </span>
+                                        <span v-if="(modal.data.department_ids || []).length > 1"
+                                            class="flex-shrink-0 text-[10px] font-bold bg-brand-100 text-brand-700 px-1.5 py-0.5 rounded-md">
+                                            {{ modal.data.department_ids.length }}
+                                        </span>
                                     </button>
-                                    <div v-if="activeDropdown === 'dept'" class="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-50 py-1 max-h-48 overflow-y-auto custom-scrollbar anim-page">
-                                        <button type="button" @click="setEmployeeDept(''); activeDropdown = ''" class="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 text-slate-400">
-                                            -- Chọn --
-                                        </button>
-                                        <button type="button" v-for="d in data.departments" :key="d.id" @click="setEmployeeDept(d.id); activeDropdown = ''" class="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 text-slate-700">
-                                            {{ d.name }}
-                                        </button>
+                                    <div v-if="activeDropdown === 'dept'" class="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-50 py-1 anim-page">
+                                        <div class="max-h-48 overflow-y-auto custom-scrollbar">
+                                            <button type="button" v-for="d in data.departments" :key="d.id"
+                                                @click="toggleEmployeeDept(d.id)"
+                                                class="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 flex items-center justify-between gap-2"
+                                                :class="(modal.data.department_ids || []).indexOf(d.id) > -1 ? 'text-brand-600 font-medium bg-brand-50/60' : 'text-slate-700'">
+                                                <span class="truncate">{{ d.name }}</span>
+                                                <iconify-icon v-if="(modal.data.department_ids || []).indexOf(d.id) > -1"
+                                                    icon="solar:check-circle-bold" width="18" class="flex-shrink-0"></iconify-icon>
+                                            </button>
+                                        </div>
+                                        <div class="border-t border-slate-100 px-3 py-2 flex items-center justify-between">
+                                            <span class="text-[11px] text-slate-400">Đã chọn {{ (modal.data.department_ids || []).length }}</span>
+                                            <button type="button" @click="activeDropdown = ''"
+                                                class="text-xs font-semibold text-brand-600 hover:text-brand-700 px-2 py-1">Xong</button>
+                                        </div>
                                     </div>
                                 </div>
+                                <p v-if="modal.data.role === 'Director'" class="text-[11px] text-slate-400 mt-1">
+                                    Giám đốc văn phòng xem được toàn bộ phòng ban, mục này chỉ để ghi nhận nơi trực thuộc.
+                                </p>
                                 <p v-if="modalErrors.department_id" class="form-error"><iconify-icon
                                         icon="solar:danger-circle-bold" width="14"></iconify-icon>{{
                                     modalErrors.department_id }}</p>
@@ -5872,7 +5875,6 @@
                     { value: 'Leader',   label: 'Teamlead',           icon: '⭐', hint: 'Phụ trách 1 phòng, không tạo dự án' },
                     { value: 'Member',   label: 'Nhân viên',          icon: '👤', hint: 'Chỉ thấy việc của mình' }
                 ]
-                const roleAllowsMultiDept = (r) => r === 'Manager'
 
                 const visibleMenuLinks = computed(() => {
                     if (!currentUser.value) return []
@@ -7035,13 +7037,8 @@
                         }
                         var emailRegex = new RegExp('^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$');
                         if (modal.data.email && !emailRegex.test(modal.data.email)) { modalErrors.email = 'Email không hợp lệ'; valid = false }
-                        // Giám đốc văn phòng xem toàn bộ nên không cần gán phòng ban
-                        if (modal.data.role === 'Director') {
-                            // bỏ qua
-                        } else if (roleAllowsMultiDept(modal.data.role)) {
-                            if (!(modal.data.department_ids && modal.data.department_ids.length)) { modalErrors.department_id = 'Vui lòng chọn ít nhất 1 phòng ban'; valid = false }
-                        } else if (!modal.data.department_id) {
-                            modalErrors.department_id = 'Vui lòng chọn phòng ban'; valid = false
+                        if (!(modal.data.department_ids && modal.data.department_ids.length)) {
+                            modalErrors.department_id = 'Vui lòng chọn ít nhất 1 phòng ban'; valid = false
                         }
                     } else if (modal.type === 'department') {
                         if (!(modal.data.name && modal.data.name.trim())) { modalErrors.name = 'Vui lòng nhập tên phòng ban'; valid = false }
@@ -7864,15 +7861,9 @@
                 const setEmployeeRole = (role) => {
                     modal.data.role = role
                     activeDropdown.value = ''
-                    if (role === 'Director') {
-                        modal.data.department_ids = []   // xem toàn bộ, không gán phòng
-                    } else if (!roleAllowsMultiDept(role)) {
-                        // Teamlead/Nhân viên chỉ giữ 1 phòng ban
-                        modal.data.department_ids = (modal.data.department_ids || []).slice(0, 1)
-                    }
-                    syncEmployeeDepts()
                     modalErrors.department_id = ''
                 }
+                // Mọi vai trò đều gán được nhiều phòng ban
                 const toggleEmployeeDept = (id) => {
                     if (!modal.data.department_ids) modal.data.department_ids = []
                     var i = modal.data.department_ids.indexOf(id)
@@ -7881,11 +7872,13 @@
                     syncEmployeeDepts()
                     modalErrors.department_id = ''
                 }
-                const setEmployeeDept = (id) => {
-                    modal.data.department_ids = id ? [id] : []
-                    modal.data.department_id = id
-                    modalErrors.department_id = ''
-                }
+                const selectedDeptNames = computed(() => {
+                    var ids = (modal.data && modal.data.department_ids) || []
+                    return ids
+                        .map(function(id) { var d = data.departments.find(x => x.id === id); return d ? d.name : '' })
+                        .filter(Boolean)
+                        .join(', ')
+                })
 
                 const submitModal = async () => {
                     if (!validateModal()) return
@@ -8693,8 +8686,8 @@
                     showCredentials, toggleCredentials, greetingTime, attentionTasks, formatRelativeDate,
                     ganttMonth, ganttYear, ganttSearchQuery, ganttExpanded, ganttPrevMonth, ganttNextMonth, ganttGoToday, toggleGanttGroup, ganttDays, ganttGroups, getGanttBar, getGanttBarStyle, ganttBarLabel,
                     promptDialog, handlePromptOk, handlePromptCancel,
-                    myRank, roleRank, roleLabel, roleIcon, roleBadgeClass, assignableRoles, roleAllowsMultiDept,
-                    setEmployeeRole, toggleEmployeeDept, setEmployeeDept,
+                    myRank, roleRank, roleLabel, roleIcon, roleBadgeClass, assignableRoles,
+                    setEmployeeRole, toggleEmployeeDept, selectedDeptNames,
                     annFilter, annQuickTabs, annTabCounts, annTagOptions, toggleAnnTag, showAnnAdvanced, annAdvancedCount, resetAnnFilters,
                     filteredAnnouncements, annUnreadCount, bannerAnnouncement, dismissBanner, canPublishAnnouncement,
                     stripHtml, formatDateTime, employeeName, toggleArrayItem,
