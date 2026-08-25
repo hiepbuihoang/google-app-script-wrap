@@ -2330,7 +2330,7 @@
                                                 <p class="font-semibold text-slate-800 text-base leading-snug truncate">{{ emp.name }}</p>
                                                 <p class="text-sm text-slate-500 mt-0.5 flex items-center gap-1.5 truncate">
                                                     <iconify-icon icon="solar:buildings-2-linear" width="14" class="text-slate-400 flex-shrink-0"></iconify-icon>
-                                                    <span class="truncate">{{ emp.department?.name || 'Chưa phân bổ' }}</span>
+                                                    <span class="truncate">{{ employeeDeptNames(emp) }}</span>
                                                 </p>
                                             </div>
                                         </div>
@@ -2429,7 +2429,7 @@
                                             <td class="py-4 text-slate-600 align-middle">
                                                 <div class="flex items-center gap-1.5">
                                                     <iconify-icon icon="solar:buildings-2-linear" width="14" class="text-slate-400"></iconify-icon>
-                                                    <span>{{ emp.department?.name || 'Chưa phân bổ' }}</span>
+                                                    <span>{{ employeeDeptNames(emp) }}</span>
                                                 </div>
                                             </td>
                                             <td class="py-4 align-middle">
@@ -7889,6 +7889,17 @@
                     syncEmployeeDepts()
                     modalErrors.department_id = ''
                 }
+                // Nhân viên có thể thuộc nhiều phòng ban -> liệt kê đủ, không chỉ phòng đầu tiên
+                const employeeDeptNames = (emp) => {
+                    if (!emp) return 'Chưa phân bổ'
+                    var ids = emp.department_ids && emp.department_ids.length
+                        ? emp.department_ids
+                        : (emp.department_id ? [emp.department_id] : [])
+                    var names = ids
+                        .map(function(id) { var d = data.departments.find(x => x.id === id); return d ? d.name : '' })
+                        .filter(Boolean)
+                    return names.length ? names.join(', ') : 'Chưa phân bổ'
+                }
                 const selectedDeptNames = computed(() => {
                     var ids = (modal.data && modal.data.department_ids) || []
                     return ids
@@ -7956,12 +7967,17 @@
                             phone: modal.data.phone || '',
                             avatar: modal.data.avatar || '',
                             role: modal.data.role || 'Member',
+                            // Phải giữ cả mảng phòng ban. Trước đây chỉ chép department_id nên sau khi
+                            // lưu, state cục bộ chỉ còn 1 phòng -> mở lại form thấy thiếu, và lần lưu
+                            // tiếp theo gửi lên 1 phòng khiến các phòng còn lại bị xóa thật.
+                            department_ids: (modal.data.department_ids || []).slice(),
                             department_id: modal.data.department_id || '',
                             telegram_chat_id: modal.data.telegram_chat_id || '',
                             zalo_user_id: modal.data.zalo_user_id || '',
                             created_at: isEdit ? modal.data.created_at : getLocalISOString()
                         }
-                        eData.department = data.departments.find(d => d.id === eData.department_id);
+                        eData.departments = data.departments.filter(d => eData.department_ids.indexOf(d.id) > -1);
+                        eData.department = eData.departments[0] || null;
                         if (isEdit) {
                             var idx = data.employees.findIndex(x => x.id === modal.data.id);
                             if (idx > -1) data.employees[idx] = eData;
@@ -8704,7 +8720,7 @@
                     ganttMonth, ganttYear, ganttSearchQuery, ganttExpanded, ganttPrevMonth, ganttNextMonth, ganttGoToday, toggleGanttGroup, ganttDays, ganttGroups, getGanttBar, getGanttBarStyle, ganttBarLabel,
                     promptDialog, handlePromptOk, handlePromptCancel,
                     myRank, roleRank, roleLabel, roleIcon, roleBadgeClass, assignableRoles,
-                    setEmployeeRole, toggleEmployeeDept, selectedDeptNames,
+                    setEmployeeRole, toggleEmployeeDept, selectedDeptNames, employeeDeptNames,
                     annFilter, annQuickTabs, annTabCounts, annTagOptions, toggleAnnTag, showAnnAdvanced, annAdvancedCount, resetAnnFilters,
                     filteredAnnouncements, annUnreadCount, bannerAnnouncement, dismissBanner, canPublishAnnouncement,
                     stripHtml, formatDateTime, employeeName, toggleArrayItem,
