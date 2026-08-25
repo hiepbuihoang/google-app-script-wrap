@@ -1685,9 +1685,9 @@
                             <span v-if="unreadCount > 0"
                                 class="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
                         </button>
-                        <button @click="navigate('announcements')" title="Thông báo nội bộ"
+                        <button v-if="canAccessPage('announcements')" @click="navigate('announcements')" title="Thông báo nội bộ"
                             class="relative p-2.5 text-slate-500 hover:bg-slate-100 rounded-xl transition">
-                            <iconify-icon icon="solar:megaphone-bold" width="24"></iconify-icon>
+                            <iconify-icon icon="solar:volume-loud-bold" width="24"></iconify-icon>
                             <span v-if="annUnreadCount > 0"
                                 class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full ring-2 ring-white flex items-center justify-center">{{ annUnreadCount > 99 ? '99+' : annUnreadCount }}</span>
                         </button>
@@ -3936,7 +3936,7 @@
                         <div class="flex items-center justify-between gap-3">
                             <div>
                                 <h3 class="font-bold text-lg text-slate-800 flex items-center gap-2">
-                                    <iconify-icon icon="solar:megaphone-bold" width="22" class="text-brand-500"></iconify-icon>
+                                    <iconify-icon icon="solar:volume-loud-bold" width="22" class="text-brand-500"></iconify-icon>
                                     Thông báo nội bộ
                                 </h3>
                                 <p class="text-xs text-slate-400 mt-0.5">{{ filteredAnnouncements.length }} thông báo · {{ annUnreadCount }} chưa đọc</p>
@@ -5481,7 +5481,7 @@
             <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl z-10 overflow-hidden max-h-[92vh] flex flex-col">
                 <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center flex-shrink-0">
                     <h3 class="font-bold text-lg text-slate-900 flex items-center gap-2">
-                        <iconify-icon icon="solar:megaphone-bold" width="22" class="text-brand-500"></iconify-icon>
+                        <iconify-icon icon="solar:volume-loud-bold" width="22" class="text-brand-500"></iconify-icon>
                         {{ annEditor.id ? 'Sửa thông báo' : 'Soạn thông báo mới' }}
                     </h3>
                     <button @click="annEditor.open = false" class="p-2 hover:bg-slate-100 rounded-lg transition">
@@ -5848,7 +5848,7 @@
                     { label: 'Tiến độ', icon: 'solar:chart-square-bold', to: 'progress' },
                     { label: 'Lịch', icon: 'solar:history-bold', to: 'timeline' },
                     { label: 'Thông báo', icon: 'solar:bell-bold', to: 'notifications' },
-                    { label: 'Thông báo NB', icon: 'solar:megaphone-bold', to: 'announcements' },
+                    { label: 'Thông báo NB', icon: 'solar:volume-loud-bold', to: 'announcements' },
                     { label: 'Cài đặt', icon: 'solar:settings-bold', to: 'settings' }
                 ]
 
@@ -5892,17 +5892,18 @@
                     { value: 'Member',   label: 'Nhân viên',          icon: '👤', hint: 'Chỉ thấy việc của mình' }
                 ]
 
-                // Chỉ liệt kê mục BỊ CHẶN, không liệt kê mục được phép. Cách cũ dùng danh sách
-                // cho phép nên quên thêm 'gantt' vào nhánh fallback -> mất menu Gantt; thêm
-                // trang mới sau này cũng sẽ âm thầm bị ẩn với mọi vai trò thấp.
-                const OWNER_ONLY_PAGES = ['categories', 'departments']
+                // Cấp bậc TỐI THIỂU để vào từng trang. Trang không liệt kê ở đây thì ai cũng vào được,
+                // nên thêm trang mới sẽ không bị âm thầm ẩn mất (lỗi từng làm mất menu Gantt).
+                const PAGE_MIN_RANK = {
+                    categories: 5,     // Workflow - chỉ Owner
+                    departments: 5,    // Phòng ban - chỉ Owner
+                    employees: 2,      // Nhân viên - Teamlead trở lên
+                    announcements: 3   // Thông báo nội bộ - Manager trở lên
+                }
+                const canAccessPage = (page) => myRank.value >= (PAGE_MIN_RANK[page] || 1)
                 const visibleMenuLinks = computed(() => {
                     if (!currentUser.value) return []
-                    var rank = myRank.value
-                    return menuLinks.filter(function(l) {
-                        if (rank >= 5) return true                       // Owner: tất cả
-                        return OWNER_ONLY_PAGES.indexOf(l.to) === -1     // còn lại: tất cả trừ trang quản trị
-                    })
+                    return menuLinks.filter(function(l) { return canAccessPage(l.to) })
                 })
 
                 const data = reactive({ departments: [], employees: [], tasks: [], categories: [], projects: [], notifications: [], announcements: [] })
@@ -6326,6 +6327,9 @@
                     var found = menuLinks.find(l => l.to === currentRoute.value); return (found && found.label) || '';
                 })
                 const navigate = (to) => {
+                    // Chặn cả ở đây chứ không chỉ ẩn menu: vẫn có thể tới trang qua deep link
+                    // hoặc route còn sót lại sau khi đổi vai trò.
+                    if (!canAccessPage(to)) { currentRoute.value = 'dashboard'; return; }
                     currentRoute.value = to;
                     if (to === 'dashboard' && stats.value) {
                         nextTick(function() {
@@ -6528,7 +6532,33 @@
                     calDayPopup.open = true
                 }
 
-                const filteredEmployees = computed(() => searchQuery.value ? data.employees.filter(e => e.name.toLowerCase().includes(searchQuery.value.toLowerCase())) : data.employees)
+                // Phòng ban mà người đang đăng nhập phụ trách (Manager có thể nhiều phòng)
+                const myDeptIds = computed(() => {
+                    if (!currentUser.value) return []
+                    var raw = currentUser.value.department_id || ''
+                    return String(raw).split(',').map(x => x.trim()).filter(Boolean)
+                })
+                // Tab Nhân viên hiển thị theo phạm vi: Teamlead/Manager chỉ thấy người trong
+                // phòng mình phụ trách, Giám đốc/Owner thấy toàn bộ.
+                // Lưu ý: data.employees vẫn giữ đủ danh bạ để render tên/avatar người thực hiện
+                // trên thẻ nhiệm vụ - chỉ lọc ở khâu hiển thị danh sách này.
+                const employeesInMyScope = computed(() => {
+                    if (myRank.value >= 4) return data.employees          // Owner, Giám đốc
+                    if (myRank.value < 2) return []                        // Nhân viên không vào tab này
+                    var mine = myDeptIds.value
+                    if (!mine.length) return []
+                    return data.employees.filter(function(e) {
+                        var ids = (e.department_ids && e.department_ids.length)
+                            ? e.department_ids
+                            : (e.department_id ? [e.department_id] : [])
+                        return ids.some(function(d) { return mine.indexOf(d) > -1 })
+                    })
+                })
+                const filteredEmployees = computed(() => {
+                    var list = employeesInMyScope.value
+                    if (!searchQuery.value) return list
+                    return list.filter(e => e.name.toLowerCase().includes(searchQuery.value.toLowerCase()))
+                })
                 const filteredTasks = computed(() => {
                     let t = [...data.tasks];
                     if (taskFilter.status !== 'all') t = t.filter(x => x.status === taskFilter.status);
@@ -8721,6 +8751,7 @@
                     promptDialog, handlePromptOk, handlePromptCancel,
                     myRank, roleRank, roleLabel, roleIcon, roleBadgeClass, assignableRoles,
                     setEmployeeRole, toggleEmployeeDept, selectedDeptNames, employeeDeptNames,
+                    canAccessPage, employeesInMyScope,
                     annFilter, annQuickTabs, annTabCounts, annTagOptions, toggleAnnTag, showAnnAdvanced, annAdvancedCount, resetAnnFilters,
                     filteredAnnouncements, annUnreadCount, bannerAnnouncement, dismissBanner, canPublishAnnouncement,
                     stripHtml, formatDateTime, employeeName, toggleArrayItem,
