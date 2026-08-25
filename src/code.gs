@@ -196,6 +196,71 @@ function parseIds(str) {
     return (str || '').toString().split(',').map(function(x) { return x.trim(); }).filter(function(x) { return x; });
 }
 
+// ============ PHÂN QUYỀN TẬP TRUNG ============
+// Thứ bậc: Owner > Director > Manager > Leader > Member
+//   Owner    : tài khoản gốc trong sheet Cài Đặt (kiêm vai trò BOD) - toàn quyền, toàn bộ dữ liệu
+//   Director : Giám đốc văn phòng - xem toàn bộ, KHÔNG quản trị hệ thống
+//   Manager  : quản lý NHIỀU phòng ban (cột 'ID Phòng ban' lưu CSV)
+//   Leader   : teamlead, phạm vi hẹp hơn Manager, KHÔNG được tạo dự án
+//   Member   : nhân viên, chỉ thấy việc của mình
+//
+// Toàn bộ logic "ai thấy gì / ai làm được gì" phải đi qua đây. Trước kia logic này bị
+// copy 3 bản ở getAllData/getTasks/getCoreData rồi lệch nhau, sinh lỗi phân quyền.
+var ROLE_RANK = { 'Owner': 5, 'Director': 4, 'Manager': 3, 'Leader': 2, 'Member': 1 };
+
+function roleRank(role) {
+    return ROLE_RANK[String(role || '').trim()] || 0;
+}
+
+// Gói phạm vi dữ liệu của một người dùng
+function getScope(userRole, userId, userDeptId) {
+    var rank = roleRank(userRole);
+    return {
+        role: userRole,
+        rank: rank,
+        userId: String(userId || '').trim(),
+        deptIds: parseIds(userDeptId),
+        seeAll: rank >= 4,              // Owner, Director
+        byDept: rank === 3 || rank === 2, // Manager, Leader
+        selfOnly: rank === 1            // Member
+    };
+}
+
+function canSeeTask(t, scope) {
+    if (scope.seeAll) return true;
+    if (scope.rank === 0) return false; // vai trò lạ -> chặn (fallback an toàn)
+
+    var creator = String(t['ID Người tạo'] || '').trim();
+    var assignees = parseIds(t['ID Người thực hiện']);
+    var isMine = creator === scope.userId || assignees.indexOf(scope.userId) > -1;
+    if (scope.selfOnly) return isMine;
+
+    // Manager/Leader: việc trong phòng mình phụ trách, hoặc việc liên quan trực tiếp tới mình
+    var taskDept = String(t['ID Phòng ban'] || '').trim();
+    return scope.deptIds.indexOf(taskDept) > -1 || isMine;
+}
+
+// Quyền hành động. Dùng chung cho backend; frontend ẩn nút tương ứng nhưng
+// backend vẫn phải tự kiểm tra vì ẩn ở giao diện không phải là bảo vệ.
+function can(action, scope) {
+    switch (action) {
+        case 'manageSystem':   // cài đặt, phòng ban, workflow, xóa nhân viên
+            return scope.rank >= 5;
+        case 'deleteTask':
+            return scope.rank >= 5;
+        case 'viewPasswords':  // xem mật khẩu nhân viên
+            return scope.rank >= 5;
+        case 'createProject':  // Leader KHÔNG được tạo dự án
+            return scope.rank >= 3;
+        case 'editTaskDescription':
+            return scope.rank >= 2;
+        case 'assignTask':
+            return scope.rank >= 2;
+        default:
+            return false;
+    }
+}
+
 function ensureColumnExists(sheetName, colName) {
     var sheet = getSheet(sheetName);
     if (!sheet) return;
@@ -233,14 +298,16 @@ function getAllData(userRole, userId, userDeptId) {
         };
     });
     
-    // Process employees (Manager can now see & assign across all departments)
-    var filteredEmps = empsRaw;
-    var employees = filteredEmps.map(function(e) {
+    // Danh bạ nhân viên hiển thị cho mọi vai trò (cần để render tên/avatar người thực hiện),
+    // nhưng mật khẩu chỉ trả về cho người có quyền.
+    var scope = getScope(userRole, userId, userDeptId);
+    var showPwd = can('viewPasswords', scope);
+    var employees = empsRaw.map(function(e) {
         var deptIds = parseIds(e['ID Phòng ban']);
         var deptObjs = departments.filter(function(d) { return deptIds.indexOf(d.id) > -1; });
         return {
             id: e['ID'], name: e['Họ tên'], username: e['Tên đăng nhập'],
-            password: e['Mật khẩu'],
+            password: showPwd ? e['Mật khẩu'] : '',
             email: e['Email'], phone: formatPhone(e['Điện thoại']), avatar: e['Ảnh đại diện'],
             role: e['Vai trò'], department_id: deptIds[0] || '',
             department_ids: deptIds,
@@ -281,26 +348,8 @@ function getAllData(userRole, userId, userDeptId) {
     });
     
     // Process tasks
-    var filteredTasks = tasksRaw;
-    if (userRole === 'Member') {
-        filteredTasks = tasksRaw.filter(function(t) {
-            var rawVal = (t['ID Người thực hiện'] || '').toString();
-            var ids = rawVal.split(',').map(function(id) { return id.trim(); });
-            var targetId = String(userId).trim();
-            return ids.indexOf(targetId) > -1;
-        });
-    }
-    else if (userRole === 'Manager') {
-        var userDeptIds = parseIds(userDeptId);
-        var uidTrim = String(userId).trim();
-        filteredTasks = tasksRaw.filter(function(t) {
-            var taskDeptId = String(t['ID Phòng ban'] || '').trim();
-            var creatorId = String(t['ID Người tạo'] || '').trim();
-            var aIds = (t['ID Người thực hiện'] || '').toString().split(',').map(function(x) { return x.trim(); });
-            return userDeptIds.indexOf(taskDeptId) > -1 || creatorId === uidTrim || aIds.indexOf(uidTrim) > -1;
-        });
-    }
-    
+    var filteredTasks = tasksRaw.filter(function(t) { return canSeeTask(t, scope); });
+
     var tasks = filteredTasks.map(function(t) {
         var assigneeIdStr = (t['ID Người thực hiện'] || '').toString();
         var assigneeIds = assigneeIdStr ? assigneeIdStr.split(',').map(function(id) { return id.trim(); }) : [];
@@ -486,8 +535,8 @@ function computeDashboardStats(tasks, empsRaw, depts, cats, userRole) {
     return {
         totalTasks: totalTasks, doneTasks: doneTasks, inProgressTasks: inProgressTasks,
         todoTasks: todoTasks, overdueTasks: overdueTasks, completedThisMonth: completedThisMonth,
-        totalEmployees: userRole === 'Owner' ? empsRaw.length : 0,
-        totalDepartments: userRole === 'Owner' ? depts.length : 0,
+        totalEmployees: roleRank(userRole) >= 4 ? empsRaw.length : 0,
+        totalDepartments: roleRank(userRole) >= 4 ? depts.length : 0,
         chartWeekly: chartWeekly, chartStatus: chartStatus,
         chartCompletionTrend: chartCompletionTrend, chartByDept: chartByDept,
         chartByPriority: chartByPriority, chartByCategory: chartByCategory
@@ -665,8 +714,10 @@ function deleteDepartment(id) {
 }
 
 // ============ EMPLOYEES ============
-function getEmployees(userRole, userDeptId) {
-    // Manager không còn bị giới hạn xem/giao việc trong phạm vi phòng mình nữa
+function getEmployees(userRole, userDeptId, userId) {
+    // Danh bạ mở cho mọi vai trò (cần để render người thực hiện), mật khẩu thì không.
+    var scope = getScope(userRole, userId, userDeptId);
+    var showPwd = can('viewPasswords', scope);
     let data = getSheetData(SHEET_NAMES.EMPLOYEES);
     const depts = getDepartments();
     return data.map(e => {
@@ -674,7 +725,7 @@ function getEmployees(userRole, userDeptId) {
         var deptObjs = depts.filter(d => deptIds.indexOf(d.id) > -1);
         return {
             id: e['ID'], name: e['Họ tên'], username: e['Tên đăng nhập'],
-            password: e['Mật khẩu'],
+            password: showPwd ? e['Mật khẩu'] : '',
             email: e['Email'], phone: formatPhone(e['Điện thoại']), avatar: e['Ảnh đại diện'],
             role: e['Vai trò'], department_id: deptIds[0] || '',
             department_ids: deptIds,
@@ -788,23 +839,8 @@ function getTasks(userRole, userId, userDeptId) {
         let data = getSheetData(SHEET_NAMES.TASKS);
         console.log('getTasks - raw data count:', data.length, 'userRole:', userRole);
 
-        if (userRole === 'Member') {
-            data = data.filter(t => {
-                const assigneeIds = (t['ID Người thực hiện'] || '').toString().split(',').map(id => id.trim());
-                return assigneeIds.indexOf(userId) > -1;
-            });
-        }
-        else if (userRole === 'Manager') {
-            var managerDeptIds = parseIds(userDeptId);
-            var managerUid = String(userId).trim();
-            data = data.filter(t => {
-                var taskDeptId = String(t['ID Phòng ban'] || '').trim();
-                var creatorId = String(t['ID Người tạo'] || '').trim();
-                var aIds = (t['ID Người thực hiện'] || '').toString().split(',').map(x => x.trim());
-                return managerDeptIds.indexOf(taskDeptId) > -1 || creatorId === managerUid || aIds.indexOf(managerUid) > -1;
-            });
-        }
-        else if (userRole !== 'Owner') return []; // Fallback security
+        var scope = getScope(userRole, userId, userDeptId);
+        data = data.filter(t => canSeeTask(t, scope));
 
         const emps = getSheetData(SHEET_NAMES.EMPLOYEES);
         const cats = getCategories();
@@ -899,7 +935,7 @@ function updateTask(id, data, userRole, userId) {
     // Bỏ hạn chế Member chuyển trạng thái Done theo kế hoạch đã thống nhất
     const updates = {};
     if (data.title) updates['Tiêu đề'] = data.title;
-    if ((userRole === 'Owner' || userRole === 'Manager') && data.description !== undefined) updates['Mô tả'] = data.description;
+    if (can('editTaskDescription', getScope(userRole, userId, null)) && data.description !== undefined) updates['Mô tả'] = data.description;
     
     const oldAssigneeIdStr = (task['ID Người thực hiện'] || '').toString();
     const oldAssigneeIds = oldAssigneeIdStr ? oldAssigneeIdStr.split(',').map(id => id.trim()) : [];
@@ -1020,7 +1056,7 @@ function toggleTaskStar(taskId, userId) {
 
 function deleteTask(id, userRole) {
     // Chỉ Owner mới được xóa nhiệm vụ
-    if (userRole !== 'Owner') return { success: false, message: 'Bạn không có quyền xóa nhiệm vụ' };
+    if (!can('deleteTask', getScope(userRole, null, null))) return { success: false, message: 'Bạn không có quyền xóa nhiệm vụ' };
     const task = findRowByColumn(SHEET_NAMES.TASKS, 'ID', id);
     if (task) { deleteRow(SHEET_NAMES.TASKS, task._rowIndex); return { success: true }; }
     return { success: false };
@@ -1231,8 +1267,8 @@ function getDashboardStats(userRole, userId, userDeptId) {
         return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
     }).length;
 
-    const emps = userRole === 'Owner' ? getSheetData(SHEET_NAMES.EMPLOYEES) : [];
-    const depts = userRole === 'Owner' ? getDepartments() : [];
+    const emps = roleRank(userRole) >= 4 ? getSheetData(SHEET_NAMES.EMPLOYEES) : [];
+    const depts = roleRank(userRole) >= 4 ? getDepartments() : [];
     const cats = getCategories();
 
     // Chart 1: Bar - tasks by status per day (last 7 days)
@@ -2085,24 +2121,9 @@ function getCoreData(userRole, userId, userDeptId) {
         return { id: p['ID'], name: p['Tên dự án'], color: p['Màu sắc'] || '#6366f1' };
     });
     
-    var filteredTasks = tasksRaw;
-    if (userRole === 'Member') {
-        filteredTasks = tasksRaw.filter(function(t) {
-            var rawVal = (t['ID Người thực hiện'] || '').toString();
-            var ids = rawVal.split(',').map(function(id) { return id.trim(); });
-            return ids.indexOf(String(userId).trim()) > -1;
-        });
-    } else if (userRole === 'Manager') {
-        var managerDeptIds2 = parseIds(userDeptId);
-        var managerUid2 = String(userId).trim();
-        filteredTasks = tasksRaw.filter(function(t) {
-            var taskDeptId = String(t['ID Phòng ban'] || '').trim();
-            var creatorId = String(t['ID Người tạo'] || '').trim();
-            var aIds = (t['ID Người thực hiện'] || '').toString().split(',').map(function(x) { return x.trim(); });
-            return managerDeptIds2.indexOf(taskDeptId) > -1 || creatorId === managerUid2 || aIds.indexOf(managerUid2) > -1;
-        });
-    }
-    
+    var scope = getScope(userRole, userId, userDeptId);
+    var filteredTasks = tasksRaw.filter(function(t) { return canSeeTask(t, scope); });
+
     var tasks = filteredTasks.map(function(t) {
         var assigneeIdStr = (t['ID Người thực hiện'] || '').toString();
         var assigneeIds = assigneeIdStr ? assigneeIdStr.split(',').map(function(id) { return id.trim(); }) : [];
@@ -2424,38 +2445,6 @@ function parseTaskWithGemini(prompt, employees, categories, projects) {
     }
 }
 
-// ============ MIGRATION: chuẩn hóa tên vai trò 'Leader' -> 'Manager' ============
-// Chạy 1 lần thủ công trên spreadsheet đang dùng thật (OS) sau khi deploy bản code này.
-// Lý do cần: code cũ lưu/kiểm tra vai trò quản lý phòng ban bằng chuỗi 'Leader',
-// trong khi form tạo nhân viên trên UI luôn ghi 'Manager' -> lệch chuỗi gây sai quyền.
-// Đổi code không tự sửa dữ liệu chữ đã có sẵn trong sheet, nên cần chạy hàm này 1 lần.
-function migrateLeaderRoleToManager() {
-    var sheet = getSheet(SHEET_NAMES.EMPLOYEES);
-    if (!sheet) return { success: false, message: 'Không tìm thấy sheet Nhân Viên' };
-
-    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function(h) { return String(h).trim(); });
-    var roleCol = headers.indexOf('Vai trò') + 1;
-    if (roleCol === 0) return { success: false, message: 'Không tìm thấy cột Vai trò' };
-
-    var lastRow = sheet.getLastRow();
-    if (lastRow < 2) return { success: true, updated: 0 };
-
-    var range = sheet.getRange(2, roleCol, lastRow - 1, 1);
-    var values = range.getValues();
-    var updated = 0;
-    for (var i = 0; i < values.length; i++) {
-        if (String(values[i][0]).trim() === 'Leader') {
-            values[i][0] = 'Manager';
-            updated++;
-        }
-    }
-    if (updated > 0) {
-        range.setValues(values);
-        clearCache('data_v2_' + SHEET_NAMES.EMPLOYEES);
-    }
-    return { success: true, updated: updated, message: 'Đã đổi ' + updated + ' tài khoản từ Leader sang Manager' };
-}
-
 // ============ THÔNG BÁO NỘI BỘ (ANNOUNCEMENTS) ============
 // Trạng thái: draft | scheduled | published
 // Mức độ: normal | important | urgent (urgent = bắt buộc xác nhận đã đọc)
@@ -2570,15 +2559,15 @@ function getAnnouncements(userRole, userId) {
     ensureAnnouncementSheets();
     var now = new Date();
     var deptIds = _userDeptIds(userId);
-    var isManager = userRole === 'Owner' || userRole === 'Manager';
+    var rank = roleRank(userRole);
 
     return getSheetData(SHEET_NAMES.ANNOUNCEMENTS)
         .filter(function(a) {
             if (!a['ID']) return false;
-            // Owner quản trị toàn hệ thống: thấy mọi thông báo
-            if (userRole === 'Owner') return true;
+            // Owner / Giám đốc: thấy mọi thông báo
+            if (rank >= 4) return true;
             // Người quản lý luôn thấy thông báo do chính mình đăng (kể cả nháp/hẹn giờ) để theo dõi
-            if (isManager && a['ID Người đăng'] === userId) return true;
+            if (rank >= 2 && a['ID Người đăng'] === userId) return true;
             return _annIsPublished(a, now) && _annVisibleTo(a, userId, deptIds);
         })
         .sort(function(x, y) {

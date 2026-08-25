@@ -2070,7 +2070,7 @@
                                             </div>
                                         </div>
                                         <div class="flex items-center gap-1 flex-shrink-0">
-                                            <button v-if="currentUser.role==='Owner' || currentUser.role==='Manager'" @click.stop="openModal('task', task)"
+                                            <button v-if="myRank >= 2" @click.stop="openModal('task', task)"
                                                 class="p-2 text-slate-500 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition shadow-sm border border-slate-200 sm:border-transparent sm:shadow-none"
                                                 title="Sửa nhiệm vụ">
                                                 <iconify-icon icon="solar:pen-2-bold" width="18"></iconify-icon>
@@ -2336,7 +2336,7 @@
                                         </div>
                                         <div class="flex items-center justify-between sm:justify-end gap-2 pt-3 sm:pt-0 border-t border-slate-100 sm:border-0 w-full sm:w-auto">
                                             <span
-                                                :class="['text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0', emp.role==='Manager'?'bg-blue-100 text-blue-700':'bg-slate-100 text-slate-600']">{{ emp.role }}</span>
+                                                :class="['text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0', roleBadgeClass(emp.role)]">{{ roleLabel(emp.role) }}</span>
                                             <div v-if="currentUser.role==='Owner'" class="flex items-center gap-1 flex-shrink-0">
                                                  <button @click.stop="openEmployeeTasks(emp)"
                                                     class="p-2 text-brand-600 hover:bg-brand-50 rounded-lg transition border border-brand-200 sm:border-transparent bg-white sm:bg-transparent shadow-sm sm:shadow-none"
@@ -2433,7 +2433,7 @@
                                                 </div>
                                             </td>
                                             <td class="py-4 align-middle">
-                                                <span :class="['text-xs font-semibold px-2.5 py-1 rounded-full', emp.role==='Manager'?'bg-blue-100 text-blue-700':'bg-slate-100 text-slate-600']">
+                                                <span :class="['text-xs font-semibold px-2.5 py-1 rounded-full', roleBadgeClass(emp.role)]">
                                                     {{ emp.role }}
                                                 </span>
                                             </td>
@@ -2699,7 +2699,7 @@
                                     <iconify-icon icon="solar:database-bold" width="18"></iconify-icon>
                                     Setup
                                 </button>
-                                <button v-if="currentUser.role==='Owner' || currentUser.role==='Manager'" @click="openModal('project')" class="btn btn-primary">
+                                <button v-if="myRank >= 3" @click="openModal('project')" class="btn btn-primary">
                                     <iconify-icon icon="solar:add-circle-bold" width="20"></iconify-icon>
                                     Thêm dự án
                                 </button>
@@ -3188,7 +3188,7 @@
                                             </div>
                                         </div>
                                         <div class="flex items-center gap-1 flex-shrink-0">
-                                            <button v-if="currentUser.role==='Owner' || currentUser.role==='Manager'" @click.stop="openModal('task', task)"
+                                            <button v-if="myRank >= 2" @click.stop="openModal('task', task)"
                                                 class="p-2 text-slate-500 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition shadow-sm border border-slate-200 sm:border-transparent sm:shadow-none"
                                                 title="Sửa nhiệm vụ">
                                                 <iconify-icon icon="solar:pen-2-bold" width="18"></iconify-icon>
@@ -4607,7 +4607,7 @@
                         <div class="form-group">
                             <label class="form-label">Mô tả</label>
                             <textarea v-model="modal.data.description" class="form-textarea"
-                                :disabled="modal.data.id && currentUser.role !== 'Owner' && currentUser.role !== 'Manager'"
+                                :disabled="modal.data.id && myRank < 2"
                                 placeholder="Mô tả chi tiết nhiệm vụ..." rows="3"></textarea>
                         </div>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -4803,33 +4803,56 @@
                             <div class="form-group">
                                 <label class="form-label">Vai trò</label>
                                 <div class="relative" @click.stop>
-                                    <button type="button" @click="activeDropdown = activeDropdown === 'role' ? '' : 'role'" 
+                                    <button type="button" @click="activeDropdown = activeDropdown === 'role' ? '' : 'role'"
                                         class="form-select flex items-center justify-between text-left w-full select-none">
-                                        <span>{{ modal.data.role === 'Manager' ? '👑 Manager' : '👤 Nhân viên' }}</span>
+                                        <span>{{ roleIcon(modal.data.role) }} {{ roleLabel(modal.data.role) }}</span>
                                     </button>
                                     <div v-if="activeDropdown === 'role'" class="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-50 py-1 anim-page">
-                                        <button type="button" @click="modal.data.role = 'Member'; activeDropdown = ''" class="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 text-slate-700 flex items-center gap-2">
-                                            👤 Nhân viên
-                                        </button>
-                                        <button type="button" @click="modal.data.role = 'Manager'; activeDropdown = ''" class="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 text-slate-700 flex items-center gap-2">
-                                            👑 Manager
+                                        <button type="button" v-for="r in assignableRoles" :key="r.value"
+                                            @click="setEmployeeRole(r.value)"
+                                            class="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 text-slate-700 flex items-start gap-2">
+                                            <span>{{ r.icon }}</span>
+                                            <span>
+                                                <span class="font-medium">{{ r.label }}</span>
+                                                <span class="block text-[11px] text-slate-400">{{ r.hint }}</span>
+                                            </span>
                                         </button>
                                     </div>
                                 </div>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Phòng ban <span class="text-red-500">*</span></label>
-                                <div class="relative" @click.stop>
-                                    <button type="button" @click="activeDropdown = activeDropdown === 'dept' ? '' : 'dept'" 
+                                <label class="form-label">
+                                    Phòng ban <span v-if="modal.data.role !== 'Director'" class="text-red-500">*</span>
+                                    <span v-if="roleAllowsMultiDept(modal.data.role)" class="text-[11px] font-normal text-slate-400">(chọn được nhiều)</span>
+                                </label>
+
+                                <!-- Giám đốc văn phòng xem toàn bộ nên không cần gán phòng ban -->
+                                <p v-if="modal.data.role === 'Director'" class="text-xs text-slate-400 py-3">
+                                    Giám đốc văn phòng xem toàn bộ phòng ban, không cần gán.
+                                </p>
+
+                                <!-- Manager: chọn nhiều phòng ban -->
+                                <div v-else-if="roleAllowsMultiDept(modal.data.role)"
+                                    class="flex flex-wrap gap-1.5 p-2 rounded-xl border"
+                                    :class="modalErrors.department_id ? 'border-red-400' : 'border-slate-200'">
+                                    <button type="button" v-for="d in data.departments" :key="d.id"
+                                        @click="toggleEmployeeDept(d.id)"
+                                        :class="(modal.data.department_ids || []).indexOf(d.id) > -1 ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                                        class="px-3 py-1.5 rounded-lg text-xs font-medium transition">{{ d.name }}</button>
+                                </div>
+
+                                <!-- Teamlead / Nhân viên: 1 phòng ban -->
+                                <div v-else class="relative" @click.stop>
+                                    <button type="button" @click="activeDropdown = activeDropdown === 'dept' ? '' : 'dept'"
                                         class="form-select flex items-center justify-between text-left w-full select-none"
                                         :class="{'error': modalErrors.department_id}">
                                         <span>{{ data.departments.find(d => d.id === modal.data.department_id)?.name || '-- Chọn --' }}</span>
                                     </button>
                                     <div v-if="activeDropdown === 'dept'" class="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-50 py-1 max-h-48 overflow-y-auto custom-scrollbar anim-page">
-                                        <button type="button" @click="modal.data.department_id = ''; activeDropdown = ''" class="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 text-slate-400">
+                                        <button type="button" @click="setEmployeeDept(''); activeDropdown = ''" class="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 text-slate-400">
                                             -- Chọn --
                                         </button>
-                                        <button type="button" v-for="d in data.departments" :key="d.id" @click="modal.data.department_id = d.id; activeDropdown = ''" class="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 text-slate-700">
+                                        <button type="button" v-for="d in data.departments" :key="d.id" @click="setEmployeeDept(d.id); activeDropdown = ''" class="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 text-slate-700">
                                             {{ d.name }}
                                         </button>
                                     </div>
@@ -4986,7 +5009,7 @@
                                             -- Chọn người phụ trách --
                                         </button>
                                         <button type="button" v-for="e in data.employees" :key="e.id" @click="modal.data.manager_id = e.id; activeDropdown = ''" class="w-full px-4 py-2.5 text-left text-sm hover:bg-slate-50 text-slate-700">
-                                            👤 {{ e.name }} ({{ e.role === 'Manager' ? 'Manager' : 'Nhân viên' }})
+                                            {{ roleIcon(e.role) }} {{ e.name }} ({{ roleLabel(e.role) }})
                                         </button>
                                     </div>
                                 </div>
@@ -5145,7 +5168,7 @@
                                 <div>
                                     <p class="font-bold text-slate-800 text-base leading-snug">{{ e.name }}</p>
                                     <div class="flex items-center gap-2 mt-1">
-                                        <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{{ e.role === 'Manager' ? '👑 Manager' : '👤 Nhân viên' }}</span>
+                                        <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{{ roleIcon(e.role) }} {{ roleLabel(e.role) }}</span>
                                         <span class="text-xs text-slate-400">@{{ e.username }}</span>
                                     </div>
                                 </div>
@@ -5826,14 +5849,40 @@
                     { label: 'Cài đặt', icon: 'solar:settings-bold', to: 'settings' }
                 ]
 
+                // ===== PHÂN QUYỀN: phải khớp với ROLE_RANK / can() bên code.gs =====
+                // Owner(5) > Director(4) > Manager(3) > Leader(2) > Member(1)
+                const ROLE_RANK = { Owner: 5, Director: 4, Manager: 3, Leader: 2, Member: 1 }
+                const ROLE_META = {
+                    Owner:    { label: 'BOD / Admin',           icon: '🛡️', badge: 'bg-purple-100 text-purple-700' },
+                    Director: { label: 'Giám đốc văn phòng',    icon: '🏢', badge: 'bg-indigo-100 text-indigo-700' },
+                    Manager:  { label: 'Manager bộ phận',       icon: '👑', badge: 'bg-blue-100 text-blue-700' },
+                    Leader:   { label: 'Teamlead',              icon: '⭐', badge: 'bg-teal-100 text-teal-700' },
+                    Member:   { label: 'Nhân viên',             icon: '👤', badge: 'bg-slate-100 text-slate-600' }
+                }
+                const roleRank = (r) => ROLE_RANK[r] || 0
+                const roleLabel = (r) => (ROLE_META[r] || ROLE_META.Member).label
+                const roleIcon = (r) => (ROLE_META[r] || ROLE_META.Member).icon
+                const roleBadgeClass = (r) => (ROLE_META[r] || ROLE_META.Member).badge
+                const myRank = computed(() => currentUser.value ? roleRank(currentUser.value.role) : 0)
+
+                // Vai trò gán được cho nhân viên (Owner là tài khoản gốc, không gán ở đây)
+                const assignableRoles = [
+                    { value: 'Director', label: 'Giám đốc văn phòng', icon: '🏢', hint: 'Xem toàn bộ, không quản trị hệ thống' },
+                    { value: 'Manager',  label: 'Manager bộ phận',    icon: '👑', hint: 'Phụ trách nhiều phòng ban' },
+                    { value: 'Leader',   label: 'Teamlead',           icon: '⭐', hint: 'Phụ trách 1 phòng, không tạo dự án' },
+                    { value: 'Member',   label: 'Nhân viên',          icon: '👤', hint: 'Chỉ thấy việc của mình' }
+                ]
+                const roleAllowsMultiDept = (r) => r === 'Manager'
+
                 const visibleMenuLinks = computed(() => {
                     if (!currentUser.value) return []
-                    var role = currentUser.value.role || 'Member'
+                    var rank = myRank.value
                     return menuLinks.filter(function(l) {
-                        if (role === 'Owner') return true
-                        if (role === 'Manager') return ['categories', 'departments'].indexOf(l.to) === -1
-                        if (role === 'Member') return ['dashboard', 'tasks', 'progress', 'timeline', 'gantt', 'projects', 'notifications', 'announcements', 'settings'].indexOf(l.to) > -1
-                        return ['dashboard', 'tasks', 'progress', 'timeline', 'projects', 'notifications', 'announcements', 'settings'].indexOf(l.to) > -1
+                        if (rank >= 5) return true                                    // Owner: tất cả
+                        // Quản trị hệ thống (workflow, phòng ban) chỉ dành cho Owner
+                        if (['categories', 'departments'].indexOf(l.to) > -1) return false
+                        if (rank >= 2) return true                                    // Director/Manager/Leader
+                        return ['dashboard', 'tasks', 'progress', 'timeline', 'gantt', 'projects', 'notifications', 'announcements', 'settings'].indexOf(l.to) > -1
                     })
                 })
 
@@ -6986,7 +7035,14 @@
                         }
                         var emailRegex = new RegExp('^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$');
                         if (modal.data.email && !emailRegex.test(modal.data.email)) { modalErrors.email = 'Email không hợp lệ'; valid = false }
-                        if (!modal.data.department_id) { modalErrors.department_id = 'Vui lòng chọn phòng ban'; valid = false }
+                        // Giám đốc văn phòng xem toàn bộ nên không cần gán phòng ban
+                        if (modal.data.role === 'Director') {
+                            // bỏ qua
+                        } else if (roleAllowsMultiDept(modal.data.role)) {
+                            if (!(modal.data.department_ids && modal.data.department_ids.length)) { modalErrors.department_id = 'Vui lòng chọn ít nhất 1 phòng ban'; valid = false }
+                        } else if (!modal.data.department_id) {
+                            modalErrors.department_id = 'Vui lòng chọn phòng ban'; valid = false
+                        }
                     } else if (modal.type === 'department') {
                         if (!(modal.data.name && modal.data.name.trim())) { modalErrors.name = 'Vui lòng nhập tên phòng ban'; valid = false }
                     } else if (modal.type === 'category') {
@@ -7768,6 +7824,13 @@
                         if (type === 'project' && !cloned.member_ids) {
                             cloned.member_ids = cloned.member_id ? cloned.member_id.split(',') : [];
                         }
+                        if (type === 'employee') {
+                            // Nhân viên có thể thuộc nhiều phòng ban (Manager), chuẩn hóa về mảng
+                            if (!cloned.department_ids || !cloned.department_ids.length) {
+                                cloned.department_ids = cloned.department_id ? String(cloned.department_id).split(',').map(x => x.trim()).filter(Boolean) : []
+                            }
+                            if (!cloned.role) cloned.role = 'Member'
+                        }
                         modal.data = cloned
                         if (type === 'task') {
                             aiPrompt.value = '';
@@ -7785,13 +7848,44 @@
                             recognition.stop();
                         }
                     }
-                    else if (type === 'employee') modal.data = { role: 'Member', department_id: '', password: '', email: '', phone: '', avatar: '', telegram_chat_id: '', zalo_user_id: '' }
+                    else if (type === 'employee') modal.data = { role: 'Member', department_id: '', department_ids: [], password: '', email: '', phone: '', avatar: '', telegram_chat_id: '', zalo_user_id: '' }
                     else if (type === 'category') modal.data = { icon: 'folder', color: '#2563EB' }
                     else if (type === 'project') modal.data = { color: '#2563EB', start_date: getLocalDateString(), end_date: '', manager_id: '', member_ids: [] }
                     else modal.data = {}
                     modal.open = true
                 }
                 const closeModal = () => { modal.open = false; activeDropdown.value = ''; }
+
+                // ===== Vai trò & phòng ban trong form nhân viên =====
+                // Backend lưu 'ID Phòng ban' dạng CSV, nên luôn đồng bộ department_ids <-> department_id.
+                const syncEmployeeDepts = () => {
+                    modal.data.department_id = (modal.data.department_ids || [])[0] || ''
+                }
+                const setEmployeeRole = (role) => {
+                    modal.data.role = role
+                    activeDropdown.value = ''
+                    if (role === 'Director') {
+                        modal.data.department_ids = []   // xem toàn bộ, không gán phòng
+                    } else if (!roleAllowsMultiDept(role)) {
+                        // Teamlead/Nhân viên chỉ giữ 1 phòng ban
+                        modal.data.department_ids = (modal.data.department_ids || []).slice(0, 1)
+                    }
+                    syncEmployeeDepts()
+                    modalErrors.department_id = ''
+                }
+                const toggleEmployeeDept = (id) => {
+                    if (!modal.data.department_ids) modal.data.department_ids = []
+                    var i = modal.data.department_ids.indexOf(id)
+                    if (i > -1) modal.data.department_ids.splice(i, 1)
+                    else modal.data.department_ids.push(id)
+                    syncEmployeeDepts()
+                    modalErrors.department_id = ''
+                }
+                const setEmployeeDept = (id) => {
+                    modal.data.department_ids = id ? [id] : []
+                    modal.data.department_id = id
+                    modalErrors.department_id = ''
+                }
 
                 const submitModal = async () => {
                     if (!validateModal()) return
@@ -8599,6 +8693,8 @@
                     showCredentials, toggleCredentials, greetingTime, attentionTasks, formatRelativeDate,
                     ganttMonth, ganttYear, ganttSearchQuery, ganttExpanded, ganttPrevMonth, ganttNextMonth, ganttGoToday, toggleGanttGroup, ganttDays, ganttGroups, getGanttBar, getGanttBarStyle, ganttBarLabel,
                     promptDialog, handlePromptOk, handlePromptCancel,
+                    myRank, roleRank, roleLabel, roleIcon, roleBadgeClass, assignableRoles, roleAllowsMultiDept,
+                    setEmployeeRole, toggleEmployeeDept, setEmployeeDept,
                     annFilter, annQuickTabs, annTabCounts, annTagOptions, toggleAnnTag, showAnnAdvanced, annAdvancedCount, resetAnnFilters,
                     filteredAnnouncements, annUnreadCount, bannerAnnouncement, dismissBanner, canPublishAnnouncement,
                     stripHtml, formatDateTime, employeeName, toggleArrayItem,
