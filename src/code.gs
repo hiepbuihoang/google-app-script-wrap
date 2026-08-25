@@ -2835,12 +2835,24 @@ function publishScheduledAnnouncements() {
     return { success: true, published: published };
 }
 
+// Tiện ích tự tạo trigger. Cần scope script.scriptapp trong manifest; nếu project khai báo
+// oauthScopes cố định mà thiếu scope này thì hàm sẽ báo lỗi -> tạo tay qua giao diện Triggers
+// (biểu tượng đồng hồ ⏰ bên trái editor), kết quả y hệt và không phải sửa manifest.
 function setupAnnouncementTrigger() {
-    ScriptApp.getProjectTriggers().forEach(function(t) {
-        if (t.getHandlerFunction() === 'publishScheduledAnnouncements') ScriptApp.deleteTrigger(t);
-    });
-    ScriptApp.newTrigger('publishScheduledAnnouncements').timeBased().everyMinutes(5).create();
-    return { success: true, message: 'Đã bật tự động đăng thông báo hẹn giờ (5 phút/lần)' };
+    try {
+        ScriptApp.getProjectTriggers().forEach(function(t) {
+            if (t.getHandlerFunction() === 'publishScheduledAnnouncements') ScriptApp.deleteTrigger(t);
+        });
+        ScriptApp.newTrigger('publishScheduledAnnouncements').timeBased().everyMinutes(5).create();
+        return { success: true, message: 'Đã bật tự động đăng thông báo hẹn giờ (5 phút/lần)' };
+    } catch (e) {
+        var msg = 'Không tạo được trigger bằng code (thiếu quyền script.scriptapp). ' +
+            'Hãy tạo tay: mở biểu tượng đồng hồ "Triggers" ở thanh trái editor -> Add Trigger -> ' +
+            'Function: publishScheduledAnnouncements, Event source: Time-driven, ' +
+            'Type: Minutes timer, Interval: Every 5 minutes -> Save. Chi tiết lỗi: ' + e.message;
+        console.error(msg);
+        return { success: false, message: msg };
+    }
 }
 
 // ============ BỘ LỌC ĐÃ LƯU (SAVED SEARCH FILTERS) ============
