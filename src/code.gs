@@ -208,15 +208,38 @@ function parseIds(str) {
 // copy 3 bản ở getAllData/getTasks/getCoreData rồi lệch nhau, sinh lỗi phân quyền.
 var ROLE_RANK = { 'Owner': 5, 'Director': 4, 'Manager': 3, 'Leader': 2, 'Member': 1 };
 
+// Giá trị vai trò trong sheet có thể được gõ tay (viết hoa/thường khác nhau, nhãn tiếng Việt,
+// viết tắt). Trước kia chỉ cần lệch 1 ký tự là rơi vào nhánh fallback -> mất menu Gantt và
+// sai phân quyền. Bảng này quy mọi biến thể đã gặp về đúng 5 vai trò chuẩn.
+var ROLE_ALIASES = {
+    'owner': 'Owner', 'admin': 'Owner', 'bod': 'Owner', 'quản trị': 'Owner',
+    'director': 'Director', 'giám đốc': 'Director', 'giam doc': 'Director',
+    'giám đốc văn phòng': 'Director', 'gdvp': 'Director',
+    'manager': 'Manager', 'quản lý': 'Manager', 'quan ly': 'Manager', 'mgr': 'Manager',
+    'leader': 'Leader', 'lead': 'Leader', 'teamlead': 'Leader', 'team lead': 'Leader',
+    'trưởng nhóm': 'Leader', 'truong nhom': 'Leader', 'tl': 'Leader',
+    'member': 'Member', 'nhân viên': 'Member', 'nhan vien': 'Member', 'staff': 'Member'
+};
+
+// Quy giá trị thô trong sheet về vai trò chuẩn. Không nhận ra -> Member (quyền thấp nhất)
+// thay vì chặn sạch, để tài khoản vẫn dùng được mà không thể leo quyền.
+function normalizeRole(role) {
+    var raw = String(role === undefined || role === null ? '' : role).trim();
+    if (ROLE_RANK[raw]) return raw;
+    var mapped = ROLE_ALIASES[raw.toLowerCase()];
+    return mapped || 'Member';
+}
+
 function roleRank(role) {
-    return ROLE_RANK[String(role || '').trim()] || 0;
+    return ROLE_RANK[normalizeRole(role)];
 }
 
 // Gói phạm vi dữ liệu của một người dùng
 function getScope(userRole, userId, userDeptId) {
-    var rank = roleRank(userRole);
+    var role = normalizeRole(userRole);
+    var rank = ROLE_RANK[role];
     return {
-        role: userRole,
+        role: role,
         rank: rank,
         userId: String(userId || '').trim(),
         deptIds: parseIds(userDeptId),
@@ -228,7 +251,6 @@ function getScope(userRole, userId, userDeptId) {
 
 function canSeeTask(t, scope) {
     if (scope.seeAll) return true;
-    if (scope.rank === 0) return false; // vai trò lạ -> chặn (fallback an toàn)
 
     var creator = String(t['ID Người tạo'] || '').trim();
     var assignees = parseIds(t['ID Người thực hiện']);
@@ -2443,6 +2465,32 @@ function parseTaskWithGemini(prompt, employees, categories, projects) {
     } catch (e) {
         throw new Error("Lỗi phân tích cú pháp kết quả AI: " + e.toString() + "\nRaw response: " + responseText);
     }
+}
+
+// Chạy tay trong Apps Script editor để xem sheet đang thực sự lưu giá trị vai trò nào.
+// Dùng khi nghi ngờ có người sửa tay cột 'Vai trò' -> lệch chuỗi -> sai quyền/mất menu.
+function auditEmployeeRoles() {
+    var emps = getSheetData(SHEET_NAMES.EMPLOYEES);
+    var counts = {};
+    emps.forEach(function(e) {
+        var raw = String(e['Vai trò'] === undefined ? '' : e['Vai trò']);
+        if (!counts[raw]) counts[raw] = { raw: raw, count: 0, hieuThanh: normalizeRole(raw), khopChinhXac: !!ROLE_RANK[raw.trim()], nguoi: [] };
+        counts[raw].count++;
+        counts[raw].nguoi.push(e['Họ tên']);
+    });
+
+    var rows = Object.keys(counts).map(function(k) { return counts[k]; });
+    var canSua = rows.filter(function(r) { return !r.khopChinhXac; });
+
+    rows.forEach(function(r) {
+        console.log((r.khopChinhXac ? '[OK]   ' : '[LỆCH] ') + 'giá trị "' + r.raw + '" x' + r.count +
+            ' -> hiểu thành ' + r.hieuThanh + ' | ' + r.nguoi.join(', '));
+    });
+    if (canSua.length) {
+        console.log('>>> Có ' + canSua.length + ' giá trị không khớp chuẩn. Nên sửa lại trong sheet cho đúng: ' +
+            Object.keys(ROLE_RANK).join(' / '));
+    }
+    return { success: true, tongNhanVien: emps.length, cacGiaTri: rows, soGiaTriLech: canSua.length };
 }
 
 // ============ THÔNG BÁO NỘI BỘ (ANNOUNCEMENTS) ============

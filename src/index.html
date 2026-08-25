@@ -5862,10 +5862,26 @@
                     Leader:   { label: 'Teamlead',              icon: '⭐', badge: 'bg-teal-100 text-teal-700' },
                     Member:   { label: 'Nhân viên',             icon: '👤', badge: 'bg-slate-100 text-slate-600' }
                 }
-                const roleRank = (r) => ROLE_RANK[r] || 0
-                const roleLabel = (r) => (ROLE_META[r] || ROLE_META.Member).label
-                const roleIcon = (r) => (ROLE_META[r] || ROLE_META.Member).icon
-                const roleBadgeClass = (r) => (ROLE_META[r] || ROLE_META.Member).badge
+                // Giữ khớp với ROLE_ALIASES bên code.gs: vai trò gõ tay trong sheet vẫn phải
+                // quy về đúng 5 giá trị chuẩn, nếu không sẽ lệch menu so với quyền thật.
+                const ROLE_ALIASES = {
+                    'owner': 'Owner', 'admin': 'Owner', 'bod': 'Owner', 'quản trị': 'Owner',
+                    'director': 'Director', 'giám đốc': 'Director', 'giam doc': 'Director',
+                    'giám đốc văn phòng': 'Director', 'gdvp': 'Director',
+                    'manager': 'Manager', 'quản lý': 'Manager', 'quan ly': 'Manager', 'mgr': 'Manager',
+                    'leader': 'Leader', 'lead': 'Leader', 'teamlead': 'Leader', 'team lead': 'Leader',
+                    'trưởng nhóm': 'Leader', 'truong nhom': 'Leader', 'tl': 'Leader',
+                    'member': 'Member', 'nhân viên': 'Member', 'nhan vien': 'Member', 'staff': 'Member'
+                }
+                const normalizeRole = (r) => {
+                    var raw = String(r === undefined || r === null ? '' : r).trim()
+                    if (ROLE_RANK[raw]) return raw
+                    return ROLE_ALIASES[raw.toLowerCase()] || 'Member'
+                }
+                const roleRank = (r) => ROLE_RANK[normalizeRole(r)]
+                const roleLabel = (r) => ROLE_META[normalizeRole(r)].label
+                const roleIcon = (r) => ROLE_META[normalizeRole(r)].icon
+                const roleBadgeClass = (r) => ROLE_META[normalizeRole(r)].badge
                 const myRank = computed(() => currentUser.value ? roleRank(currentUser.value.role) : 0)
 
                 // Vai trò gán được cho nhân viên (Owner là tài khoản gốc, không gán ở đây)
@@ -5876,15 +5892,16 @@
                     { value: 'Member',   label: 'Nhân viên',          icon: '👤', hint: 'Chỉ thấy việc của mình' }
                 ]
 
+                // Chỉ liệt kê mục BỊ CHẶN, không liệt kê mục được phép. Cách cũ dùng danh sách
+                // cho phép nên quên thêm 'gantt' vào nhánh fallback -> mất menu Gantt; thêm
+                // trang mới sau này cũng sẽ âm thầm bị ẩn với mọi vai trò thấp.
+                const OWNER_ONLY_PAGES = ['categories', 'departments']
                 const visibleMenuLinks = computed(() => {
                     if (!currentUser.value) return []
                     var rank = myRank.value
                     return menuLinks.filter(function(l) {
-                        if (rank >= 5) return true                                    // Owner: tất cả
-                        // Quản trị hệ thống (workflow, phòng ban) chỉ dành cho Owner
-                        if (['categories', 'departments'].indexOf(l.to) > -1) return false
-                        if (rank >= 2) return true                                    // Director/Manager/Leader
-                        return ['dashboard', 'tasks', 'progress', 'timeline', 'gantt', 'projects', 'notifications', 'announcements', 'settings'].indexOf(l.to) > -1
+                        if (rank >= 5) return true                       // Owner: tất cả
+                        return OWNER_ONLY_PAGES.indexOf(l.to) === -1     // còn lại: tất cả trừ trang quản trị
                     })
                 })
 
