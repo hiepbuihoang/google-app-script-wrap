@@ -34,6 +34,24 @@
             box-shadow: 0 8px 32px rgba(37, 99, 235, 0.25);
         }
 
+        /* ===== Rich text nội dung thông báo nội bộ ===== */
+        .ann-content p { margin: 0 0 0.6em; }
+        .ann-content b, .ann-content strong { font-weight: 700; }
+        .ann-content ul, .ann-content ol { margin: 0 0 0.6em 1.25em; }
+        .ann-content ul { list-style: disc; }
+        .ann-content ol { list-style: decimal; }
+        .ann-content a { color: #2563EB; text-decoration: underline; }
+        .ann-content img { max-width: 100%; border-radius: 8px; margin: 0.4em 0; }
+        .ann-content table { border-collapse: collapse; width: 100%; margin: 0.6em 0; }
+        .ann-content table td, .ann-content table th { border: 1px solid #CBD5E1; padding: 6px 10px; }
+        .ann-content h1, .ann-content h2, .ann-content h3 { font-weight: 700; margin: 0.5em 0 0.4em; }
+        .ann-content h1 { font-size: 1.35em; }
+        .ann-content h2 { font-size: 1.2em; }
+        .ann-content h3 { font-size: 1.08em; }
+        .line-clamp-2 {
+            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+        }
+
         /* ===== Splash Loading Screen - Rocket Theme ===== */
         .splash-screen {
             position: fixed; inset: 0; z-index: 999;
@@ -1667,6 +1685,12 @@
                             <span v-if="unreadCount > 0"
                                 class="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
                         </button>
+                        <button @click="navigate('announcements')" title="Thông báo nội bộ"
+                            class="relative p-2.5 text-slate-500 hover:bg-slate-100 rounded-xl transition">
+                            <iconify-icon icon="solar:megaphone-bold" width="24"></iconify-icon>
+                            <span v-if="annUnreadCount > 0"
+                                class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full ring-2 ring-white flex items-center justify-center">{{ annUnreadCount > 99 ? '99+' : annUnreadCount }}</span>
+                        </button>
                         <div class="h-8 w-px bg-slate-200"></div>
                         <div class="flex items-center gap-3">
                             <div
@@ -1676,6 +1700,28 @@
                         </div>
                     </div>
                 </header>
+
+                <!-- Top Global Banner: thông báo Quan trọng / Khẩn cấp chưa đọc -->
+                <div v-if="bannerAnnouncement"
+                    :class="bannerAnnouncement.priority === 'urgent' ? 'bg-red-600' : 'bg-amber-500'"
+                    class="flex-shrink-0 text-white px-4 lg:px-6 py-2.5 flex items-center gap-3 shadow-md">
+                    <iconify-icon :icon="bannerAnnouncement.priority === 'urgent' ? 'solar:danger-triangle-bold' : 'solar:info-circle-bold'"
+                        width="20" class="flex-shrink-0 animate-pulse"></iconify-icon>
+                    <div class="flex-1 min-w-0">
+                        <span class="text-[10px] font-bold uppercase tracking-wider opacity-80 mr-2">
+                            {{ bannerAnnouncement.priority === 'urgent' ? 'Khẩn cấp' : 'Quan trọng' }}
+                        </span>
+                        <span class="text-sm font-semibold truncate">{{ bannerAnnouncement.title }}</span>
+                    </div>
+                    <button @click="openAnnouncement(bannerAnnouncement)"
+                        class="flex-shrink-0 text-xs font-bold bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg transition">
+                        Xem ngay
+                    </button>
+                    <button v-if="bannerAnnouncement.priority !== 'urgent'" @click="dismissBanner(bannerAnnouncement.id)"
+                        class="flex-shrink-0 p-1 hover:bg-white/20 rounded-lg transition" title="Ẩn banner này">
+                        <iconify-icon icon="solar:close-circle-bold" width="18"></iconify-icon>
+                    </button>
+                </div>
 
                 <!-- Page Content -->
                 <main @click="activeDropdown = ''" class="flex-1 overflow-y-auto p-4 lg:p-6 pb-24 lg:pb-6" style="background: #F8FAFC;">
@@ -3882,6 +3928,193 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- ========== THÔNG BÁO NỘI BỘ ========== -->
+                    <div v-if="currentRoute === 'announcements'" class="max-w-5xl mx-auto anim-page space-y-4">
+
+                        <!-- Header + nút tạo -->
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <h3 class="font-bold text-lg text-slate-800 flex items-center gap-2">
+                                    <iconify-icon icon="solar:megaphone-bold" width="22" class="text-brand-500"></iconify-icon>
+                                    Thông báo nội bộ
+                                </h3>
+                                <p class="text-xs text-slate-400 mt-0.5">{{ filteredAnnouncements.length }} thông báo · {{ annUnreadCount }} chưa đọc</p>
+                            </div>
+                            <button v-if="canPublishAnnouncement" @click="openAnnouncementEditor()" class="btn btn-primary">
+                                <iconify-icon icon="solar:add-circle-bold" width="18"></iconify-icon> Soạn thông báo
+                            </button>
+                        </div>
+
+                        <!-- [A] Bộ lọc nhanh -->
+                        <div class="bg-white rounded-2xl shadow-soft border border-slate-100 p-4 space-y-3">
+                            <div class="flex flex-wrap gap-2">
+                                <button v-for="t in annQuickTabs" :key="t.key" @click="annFilter.tab = t.key"
+                                    :class="annFilter.tab === t.key ? 'bg-brand-500 text-white shadow-md shadow-brand-500/30' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                                    class="px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5">
+                                    <iconify-icon :icon="t.icon" width="14"></iconify-icon>
+                                    {{ t.label }}
+                                    <span v-if="annTabCounts[t.key] > 0"
+                                        :class="annFilter.tab === t.key ? 'bg-white/25' : 'bg-white'"
+                                        class="px-1.5 rounded-md text-[10px] font-bold">{{ annTabCounts[t.key] }}</span>
+                                </button>
+                            </div>
+
+                            <!-- Lọc nhanh theo thời gian + tìm kiếm -->
+                            <div class="flex flex-col sm:flex-row gap-2">
+                                <div class="relative flex-1">
+                                    <iconify-icon icon="solar:magnifer-linear" width="16"
+                                        class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></iconify-icon>
+                                    <input v-model="annFilter.search" class="form-input pl-9 w-full"
+                                        placeholder="Tìm trong tiêu đề, nội dung, tên file đính kèm...">
+                                </div>
+                                <select v-model="annFilter.time" class="form-select sm:w-40">
+                                    <option value="all">Mọi thời điểm</option>
+                                    <option value="today">Hôm nay</option>
+                                    <option value="week">Tuần này</option>
+                                    <option value="month">Tháng này</option>
+                                </select>
+                                <button @click="showAnnAdvanced = !showAnnAdvanced"
+                                    :class="showAnnAdvanced || annAdvancedCount > 0 ? 'bg-brand-50 text-brand-600 border-brand-200' : 'bg-white text-slate-500 border-slate-200'"
+                                    class="px-3 py-2 rounded-xl border text-xs font-semibold transition flex items-center gap-1.5 whitespace-nowrap">
+                                    <iconify-icon icon="solar:filter-bold" width="16"></iconify-icon>
+                                    Lọc nâng cao
+                                    <span v-if="annAdvancedCount > 0" class="bg-brand-500 text-white px-1.5 rounded-md text-[10px]">{{ annAdvancedCount }}</span>
+                                </button>
+                            </div>
+
+                            <!-- [B] Bộ lọc thông minh -->
+                            <div v-if="showAnnAdvanced" class="pt-3 border-t border-slate-100 space-y-3">
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    <div>
+                                        <label class="text-[11px] font-semibold text-slate-500 mb-1 block">Phòng ban phát hành</label>
+                                        <select v-model="annFilter.dept" class="form-select w-full">
+                                            <option value="all">Tất cả</option>
+                                            <option v-for="d in data.departments" :key="d.id" :value="d.id">{{ d.name }}</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="text-[11px] font-semibold text-slate-500 mb-1 block">Người đăng</label>
+                                        <select v-model="annFilter.author" class="form-select w-full">
+                                            <option value="all">Tất cả</option>
+                                            <option v-for="e in data.employees" :key="e.id" :value="e.id">{{ e.name }}</option>
+                                        </select>
+                                    </div>
+                                    <div v-if="canPublishAnnouncement">
+                                        <label class="text-[11px] font-semibold text-slate-500 mb-1 block">Trạng thái</label>
+                                        <select v-model="annFilter.status" class="form-select w-full">
+                                            <option value="all">Tất cả</option>
+                                            <option value="published">Đã đăng</option>
+                                            <option value="scheduled">Hẹn giờ</option>
+                                            <option value="draft">Bản nháp</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <!-- Thẻ chủ đề -->
+                                <div v-if="annTagOptions.length > 0">
+                                    <label class="text-[11px] font-semibold text-slate-500 mb-1.5 block">Thẻ chủ đề</label>
+                                    <div class="flex flex-wrap gap-1.5">
+                                        <button v-for="tag in annTagOptions" :key="tag" @click="toggleAnnTag(tag)"
+                                            :class="annFilter.tags.indexOf(tag) > -1 ? 'bg-indigo-500 text-white' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'"
+                                            class="px-2.5 py-1 rounded-full text-[11px] font-medium transition">#{{ tag }}</button>
+                                    </div>
+                                </div>
+
+                                <!-- Bộ lọc đã lưu -->
+                                <div class="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                                    <span class="text-[11px] font-semibold text-slate-500">Bộ lọc đã lưu:</span>
+                                    <button v-for="f in savedFilters" :key="f.id" @click="applySavedFilter(f)"
+                                        class="group px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[11px] font-medium text-slate-600 transition flex items-center gap-1.5">
+                                        <iconify-icon icon="solar:bookmark-bold" width="12"></iconify-icon>
+                                        {{ f.name }}
+                                        <iconify-icon icon="solar:close-circle-bold" width="13"
+                                            class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition"
+                                            @click.stop="removeSavedFilter(f)"></iconify-icon>
+                                    </button>
+                                    <span v-if="savedFilters.length === 0" class="text-[11px] text-slate-400">Chưa có</span>
+                                    <button @click="saveCurrentFilter" class="ml-auto px-2.5 py-1 rounded-lg border border-dashed border-slate-300 text-[11px] font-medium text-slate-500 hover:border-brand-400 hover:text-brand-600 transition">
+                                        + Lưu bộ lọc hiện tại
+                                    </button>
+                                    <button @click="resetAnnFilters" class="px-2.5 py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-red-500 transition">
+                                        Xóa lọc
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Danh sách thông báo -->
+                        <div v-if="filteredAnnouncements.length === 0"
+                            class="bg-white rounded-2xl shadow-soft border border-slate-100 text-center py-16 text-slate-400">
+                            <iconify-icon icon="solar:inbox-line-duotone" width="48" class="mb-3 opacity-50"></iconify-icon>
+                            <p class="font-medium">Không có thông báo nào</p>
+                            <p class="text-xs mt-1">Thử đổi bộ lọc hoặc từ khóa tìm kiếm</p>
+                        </div>
+
+                        <div v-else class="space-y-2.5">
+                            <div v-for="a in filteredAnnouncements" :key="a.id" @click="openAnnouncement(a)"
+                                :class="[
+                                    !a.read ? 'border-l-4 bg-white shadow-sm' : 'bg-white/70 border-l-4 border-l-transparent',
+                                    !a.read && a.priority === 'urgent' ? 'border-l-red-500' : '',
+                                    !a.read && a.priority === 'important' ? 'border-l-amber-500' : '',
+                                    !a.read && a.priority === 'normal' ? 'border-l-brand-500' : ''
+                                ]"
+                                class="rounded-2xl border border-slate-100 p-4 cursor-pointer hover:shadow-md transition">
+                                <div class="flex items-start gap-3">
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center gap-2 flex-wrap mb-1">
+                                            <span v-if="a.priority !== 'normal'"
+                                                :class="a.priority === 'urgent' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'"
+                                                class="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide">
+                                                {{ a.priority === 'urgent' ? 'Khẩn cấp' : 'Quan trọng' }}
+                                            </span>
+                                            <span v-if="a.status === 'draft'" class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-200 text-slate-600">NHÁP</span>
+                                            <span v-if="a.status === 'scheduled'" class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-100 text-purple-700">
+                                                HẸN {{ formatDateTime(a.published_at) }}
+                                            </span>
+                                            <span v-if="a.mentioned_me" class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-700">@ Nhắc tên bạn</span>
+                                            <p :class="!a.read ? 'font-bold text-slate-900' : 'font-medium text-slate-600'" class="text-base leading-snug">
+                                                {{ a.title }}
+                                            </p>
+                                        </div>
+                                        <p class="text-sm text-slate-500 line-clamp-2">{{ stripHtml(a.content) }}</p>
+
+                                        <div class="flex items-center gap-3 flex-wrap mt-2.5 text-[11px] text-slate-400 font-medium">
+                                            <span class="flex items-center gap-1">
+                                                <iconify-icon icon="solar:clock-circle-linear" width="12"></iconify-icon>
+                                                {{ formatDateTime(a.published_at || a.created_at) }}
+                                            </span>
+                                            <span class="flex items-center gap-1">
+                                                <iconify-icon icon="solar:user-linear" width="12"></iconify-icon>
+                                                {{ employeeName(a.created_by) }}
+                                            </span>
+                                            <span v-if="a.attachments.length > 0" class="flex items-center gap-1 text-brand-500">
+                                                <iconify-icon icon="solar:paperclip-linear" width="12"></iconify-icon>
+                                                {{ a.attachments.length }} tệp
+                                            </span>
+                                            <span v-for="tag in a.tags" :key="tag" class="text-indigo-500">#{{ tag }}</span>
+                                            <span v-if="canPublishAnnouncement" class="flex items-center gap-1 text-emerald-600">
+                                                <iconify-icon icon="solar:eye-linear" width="12"></iconify-icon>
+                                                {{ a.read_count }} đã đọc
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div v-if="canPublishAnnouncement" class="flex flex-col gap-1 flex-shrink-0" @click.stop>
+                                        <button @click="openReadReport(a)" class="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Báo cáo đã đọc">
+                                            <iconify-icon icon="solar:chart-square-bold" width="18"></iconify-icon>
+                                        </button>
+                                        <button @click="openAnnouncementEditor(a)" class="p-1.5 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition" title="Sửa">
+                                            <iconify-icon icon="solar:pen-bold" width="18"></iconify-icon>
+                                        </button>
+                                        <button @click="removeAnnouncement(a)" class="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition" title="Xóa">
+                                            <iconify-icon icon="solar:trash-bin-trash-bold" width="18"></iconify-icon>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </main>
 
                 <!-- Mobile Bottom Navigation -->
@@ -5132,6 +5365,317 @@
             </div>
         </div>
 
+        <!-- ========== Hộp thoại nhập liệu ========== -->
+        <div v-if="promptDialog.open" class="fixed inset-0 z-[80] flex items-center justify-center p-4">
+            <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm" @click="handlePromptCancel"></div>
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm z-10 overflow-hidden">
+                <div class="px-5 py-4 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-900">{{ promptDialog.title }}</h3>
+                </div>
+                <div class="p-5">
+                    <label v-if="promptDialog.label" class="text-xs font-semibold text-slate-600 mb-1.5 block">{{ promptDialog.label }}</label>
+                    <input v-model="promptDialog.value" :placeholder="promptDialog.placeholder"
+                        @keydown.enter.prevent="handlePromptOk" class="form-input w-full" autofocus>
+                </div>
+                <div class="px-5 py-4 border-t border-slate-100 flex justify-end gap-2 bg-slate-50/50">
+                    <button @click="handlePromptCancel" class="btn btn-secondary">Hủy</button>
+                    <button @click="handlePromptOk" class="btn btn-primary">Xác nhận</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== MODAL: Chi tiết thông báo nội bộ (kèm xác nhận bắt buộc) ========== -->
+        <div v-if="annDetail.open" class="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" @click="annMustConfirm ? null : closeAnnouncement()"></div>
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl z-10 overflow-hidden max-h-[90vh] flex flex-col">
+                <div :class="annDetail.data.priority === 'urgent' ? 'bg-red-600' : (annDetail.data.priority === 'important' ? 'bg-amber-500' : 'gradient-primary')"
+                    class="px-6 py-4 text-white flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <span v-if="annDetail.data.priority !== 'normal'" class="text-[10px] font-bold uppercase tracking-widest opacity-80">
+                            {{ annDetail.data.priority === 'urgent' ? '🚨 Thông báo khẩn cấp' : '⚠️ Thông báo quan trọng' }}
+                        </span>
+                        <h3 class="font-bold text-lg leading-snug">{{ annDetail.data.title }}</h3>
+                        <p class="text-xs opacity-80 mt-1">
+                            {{ employeeName(annDetail.data.created_by) }} · {{ formatDateTime(annDetail.data.published_at || annDetail.data.created_at) }}
+                        </p>
+                    </div>
+                    <button v-if="!annMustConfirm" @click="closeAnnouncement" class="p-1 hover:bg-white/20 rounded-lg transition flex-shrink-0">
+                        <iconify-icon icon="solar:close-circle-bold" width="24"></iconify-icon>
+                    </button>
+                </div>
+
+                <div class="p-6 overflow-y-auto flex-1">
+                    <div class="ann-content text-sm text-slate-700 leading-relaxed" v-html="annDetail.data.content"></div>
+
+                    <div v-if="annDetail.data.tags && annDetail.data.tags.length > 0" class="flex flex-wrap gap-1.5 mt-4">
+                        <span v-for="tag in annDetail.data.tags" :key="tag"
+                            class="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-600 text-[11px] font-medium">#{{ tag }}</span>
+                    </div>
+
+                    <div v-if="annDetail.data.attachments && annDetail.data.attachments.length > 0" class="mt-5 pt-4 border-t border-slate-100">
+                        <p class="text-xs font-bold text-slate-500 mb-2 flex items-center gap-1.5">
+                            <iconify-icon icon="solar:paperclip-bold" width="14"></iconify-icon>
+                            Tệp đính kèm ({{ annDetail.data.attachments.length }})
+                        </p>
+                        <div class="space-y-1.5">
+                            <a v-for="f in annDetail.data.attachments" :key="f.id" :href="f.url" target="_blank"
+                                class="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-50 hover:bg-brand-50 transition group">
+                                <iconify-icon icon="solar:file-text-bold" width="20" class="text-brand-500 flex-shrink-0"></iconify-icon>
+                                <span class="text-sm text-slate-600 group-hover:text-brand-600 truncate flex-1">{{ f.name }}</span>
+                                <iconify-icon icon="solar:arrow-right-up-linear" width="16" class="text-slate-400 flex-shrink-0"></iconify-icon>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Xác nhận bắt buộc cho thông báo khẩn -->
+                <div v-if="annMustConfirm" class="px-6 py-4 border-t-2 border-red-100 bg-red-50 flex-shrink-0">
+                    <label class="flex items-start gap-2.5 cursor-pointer">
+                        <input type="checkbox" v-model="annDetail.acknowledged" class="mt-0.5 w-4 h-4 accent-red-600 flex-shrink-0">
+                        <span class="text-sm font-semibold text-red-800">Tôi đã đọc và hiểu nội dung thông báo này</span>
+                    </label>
+                    <button @click="confirmAnnouncement" :disabled="!annDetail.acknowledged || annDetail.saving"
+                        class="btn btn-primary w-full mt-3 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <iconify-icon icon="solar:check-circle-bold" width="18"></iconify-icon>
+                        {{ annDetail.saving ? 'Đang ghi nhận...' : 'Xác nhận đã đọc' }}
+                    </button>
+                </div>
+                <div v-else class="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 flex-shrink-0 bg-slate-50/50">
+                    <button v-if="canPublishAnnouncement" @click="openReadReport(annDetail.data)" class="btn btn-secondary">
+                        <iconify-icon icon="solar:chart-square-bold" width="18"></iconify-icon> Báo cáo đã đọc
+                    </button>
+                    <button @click="closeAnnouncement" class="btn btn-secondary">Đóng</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== MODAL: Soạn thảo thông báo ========== -->
+        <div v-if="annEditor.open" class="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" @click="annEditor.open = false"></div>
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl z-10 overflow-hidden max-h-[92vh] flex flex-col">
+                <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center flex-shrink-0">
+                    <h3 class="font-bold text-lg text-slate-900 flex items-center gap-2">
+                        <iconify-icon icon="solar:megaphone-bold" width="22" class="text-brand-500"></iconify-icon>
+                        {{ annEditor.id ? 'Sửa thông báo' : 'Soạn thông báo mới' }}
+                    </h3>
+                    <button @click="annEditor.open = false" class="p-2 hover:bg-slate-100 rounded-lg transition">
+                        <iconify-icon icon="solar:close-circle-bold" width="24" class="text-slate-400"></iconify-icon>
+                    </button>
+                </div>
+
+                <div class="p-6 overflow-y-auto flex-1 space-y-4">
+                    <div>
+                        <label class="text-xs font-semibold text-slate-600 mb-1.5 block">Tiêu đề <span class="text-red-500">*</span></label>
+                        <input v-model="annEditor.form.title" class="form-input w-full" placeholder="VD: Thông báo lịch nghỉ lễ 30/4">
+                    </div>
+
+                    <!-- Rich text editor -->
+                    <div>
+                        <label class="text-xs font-semibold text-slate-600 mb-1.5 block">Nội dung <span class="text-red-500">*</span></label>
+                        <div class="border border-slate-200 rounded-xl overflow-hidden">
+                            <div class="flex flex-wrap items-center gap-0.5 px-2 py-1.5 bg-slate-50 border-b border-slate-200">
+                                <button v-for="btn in annEditorTools" :key="btn.cmd" type="button" :title="btn.title"
+                                    @click="execEditor(btn.cmd, btn.value)"
+                                    class="p-1.5 hover:bg-slate-200 rounded-md text-slate-600 transition">
+                                    <iconify-icon :icon="btn.icon" width="16"></iconify-icon>
+                                </button>
+                                <div class="w-px h-5 bg-slate-300 mx-1"></div>
+                                <button type="button" title="Chèn bảng" @click="insertEditorTable" class="p-1.5 hover:bg-slate-200 rounded-md text-slate-600 transition">
+                                    <iconify-icon icon="solar:widget-4-bold" width="16"></iconify-icon>
+                                </button>
+                                <button type="button" title="Chèn liên kết" @click="insertEditorLink" class="p-1.5 hover:bg-slate-200 rounded-md text-slate-600 transition">
+                                    <iconify-icon icon="solar:link-bold" width="16"></iconify-icon>
+                                </button>
+                                <button type="button" title="Chèn hình ảnh" @click="annImageInput && annImageInput.click()" class="p-1.5 hover:bg-slate-200 rounded-md text-slate-600 transition">
+                                    <iconify-icon icon="solar:gallery-bold" width="16"></iconify-icon>
+                                </button>
+                                <input ref="annImageInput" type="file" accept="image/*" class="hidden" @change="insertEditorImage">
+                            </div>
+                            <div ref="annEditorBody" contenteditable="true"
+                                class="ann-content px-4 py-3 min-h-[180px] max-h-[320px] overflow-y-auto text-sm text-slate-700 focus:outline-none"></div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="text-xs font-semibold text-slate-600 mb-1.5 block">Mức độ ưu tiên</label>
+                            <select v-model="annEditor.form.priority" class="form-select w-full">
+                                <option value="normal">Bình thường</option>
+                                <option value="important">Quan trọng (hiện banner)</option>
+                                <option value="urgent">Khẩn cấp (bắt buộc xác nhận đã đọc)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-xs font-semibold text-slate-600 mb-1.5 block">Đối tượng nhận</label>
+                            <select v-model="annEditor.form.scope" class="form-select w-full">
+                                <option value="all">Toàn công ty</option>
+                                <option value="departments">Theo phòng ban</option>
+                                <option value="employees">Chọn nhân viên cụ thể</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div v-if="annEditor.form.scope === 'departments'">
+                        <label class="text-xs font-semibold text-slate-600 mb-1.5 block">Chọn phòng ban</label>
+                        <div class="flex flex-wrap gap-1.5">
+                            <button v-for="d in data.departments" :key="d.id" type="button"
+                                @click="toggleArrayItem(annEditor.form.department_ids, d.id)"
+                                :class="annEditor.form.department_ids.indexOf(d.id) > -1 ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                                class="px-3 py-1.5 rounded-lg text-xs font-medium transition">{{ d.name }}</button>
+                        </div>
+                    </div>
+
+                    <div v-if="annEditor.form.scope === 'employees'">
+                        <label class="text-xs font-semibold text-slate-600 mb-1.5 block">Chọn nhân viên</label>
+                        <div class="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-2 bg-slate-50 rounded-xl">
+                            <button v-for="e in data.employees" :key="e.id" type="button"
+                                @click="toggleArrayItem(annEditor.form.employee_ids, e.id)"
+                                :class="annEditor.form.employee_ids.indexOf(e.id) > -1 ? 'bg-brand-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-200'"
+                                class="px-3 py-1.5 rounded-lg text-xs font-medium transition">{{ e.name }}</button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="text-xs font-semibold text-slate-600 mb-1.5 block">Nhắc tên (@mention)</label>
+                        <div class="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-2 bg-slate-50 rounded-xl">
+                            <button v-for="e in data.employees" :key="'m'+e.id" type="button"
+                                @click="toggleArrayItem(annEditor.form.mentioned_ids, e.id)"
+                                :class="annEditor.form.mentioned_ids.indexOf(e.id) > -1 ? 'bg-emerald-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-200'"
+                                class="px-3 py-1.5 rounded-lg text-xs font-medium transition">@{{ e.name }}</button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="text-xs font-semibold text-slate-600 mb-1.5 block">Thẻ chủ đề</label>
+                        <div class="flex flex-wrap gap-1.5 items-center">
+                            <span v-for="tag in annEditor.form.tags" :key="tag"
+                                class="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-600 text-[11px] font-medium flex items-center gap-1">
+                                #{{ tag }}
+                                <button type="button" @click="toggleArrayItem(annEditor.form.tags, tag)" class="hover:text-red-500">
+                                    <iconify-icon icon="solar:close-circle-bold" width="12"></iconify-icon>
+                                </button>
+                            </span>
+                            <input v-model="annEditor.tagInput" @keydown.enter.prevent="addEditorTag"
+                                class="form-input text-xs py-1 w-36" placeholder="Nhập thẻ rồi Enter">
+                        </div>
+                    </div>
+
+                    <!-- Đính kèm file -->
+                    <div>
+                        <label class="text-xs font-semibold text-slate-600 mb-1.5 block">Tệp đính kèm</label>
+                        <div @dragover.prevent @drop.prevent="handleAnnDrop"
+                            class="border-2 border-dashed border-slate-200 rounded-xl p-4 text-center hover:border-brand-400 transition cursor-pointer"
+                            @click="annFileInput && annFileInput.click()">
+                            <iconify-icon icon="solar:cloud-upload-bold" width="26" class="text-slate-400"></iconify-icon>
+                            <p class="text-xs text-slate-500 mt-1">Kéo thả file vào đây hoặc bấm để chọn</p>
+                            <input ref="annFileInput" type="file" multiple class="hidden" @change="handleAnnFiles($event.target.files)">
+                        </div>
+                        <div v-if="annEditor.form.attachments.length > 0" class="space-y-1.5 mt-2">
+                            <div v-for="(f, i) in annEditor.form.attachments" :key="f.id || i"
+                                class="flex items-center gap-2 p-2 rounded-lg bg-slate-50 text-sm">
+                                <iconify-icon icon="solar:file-text-bold" width="18" class="text-brand-500 flex-shrink-0"></iconify-icon>
+                                <span class="truncate flex-1 text-slate-600">{{ f.name }}</span>
+                                <span v-if="f.uploading" class="text-[11px] text-slate-400">Đang tải...</span>
+                                <button v-else type="button" @click="annEditor.form.attachments.splice(i, 1)" class="text-slate-400 hover:text-red-500">
+                                    <iconify-icon icon="solar:close-circle-bold" width="16"></iconify-icon>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Lên lịch -->
+                    <div class="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" v-model="annEditor.scheduled" class="w-4 h-4 accent-brand-500">
+                            <span class="text-xs font-semibold text-slate-600">Lên lịch đăng tự động</span>
+                        </label>
+                        <input v-if="annEditor.scheduled" type="datetime-local" v-model="annEditor.form.published_at"
+                            class="form-input w-full mt-2">
+                        <p v-if="annEditor.scheduled" class="text-[11px] text-slate-400 mt-1.5">
+                            Hệ thống kiểm tra mỗi 5 phút, thông báo có thể đăng trễ tối đa 5 phút so với giờ hẹn.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 flex-shrink-0 bg-slate-50/50">
+                    <button @click="annEditor.open = false" class="btn btn-secondary">Hủy</button>
+                    <button @click="submitAnnouncement('draft')" :disabled="annEditor.saving" class="btn btn-secondary">Lưu nháp</button>
+                    <button @click="submitAnnouncement(annEditor.scheduled ? 'scheduled' : 'published')" :disabled="annEditor.saving" class="btn btn-primary">
+                        <iconify-icon icon="solar:plain-bold" width="18"></iconify-icon>
+                        {{ annEditor.saving ? 'Đang lưu...' : (annEditor.scheduled ? 'Đặt lịch đăng' : 'Đăng ngay') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== MODAL: Báo cáo đã đọc / chưa đọc ========== -->
+        <div v-if="annReport.open" class="fixed inset-0 z-[65] flex items-center justify-center p-4">
+            <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" @click="annReport.open = false"></div>
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl z-10 overflow-hidden max-h-[90vh] flex flex-col">
+                <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center flex-shrink-0">
+                    <div class="min-w-0">
+                        <h3 class="font-bold text-lg text-slate-900 truncate">Theo dõi tương tác</h3>
+                        <p class="text-xs text-slate-400 truncate">{{ annReport.data.title }}</p>
+                    </div>
+                    <button @click="annReport.open = false" class="p-2 hover:bg-slate-100 rounded-lg transition">
+                        <iconify-icon icon="solar:close-circle-bold" width="24" class="text-slate-400"></iconify-icon>
+                    </button>
+                </div>
+
+                <div v-if="annReport.loading" class="p-12 text-center text-slate-400 text-sm">Đang tải...</div>
+
+                <template v-else>
+                    <div class="px-6 py-4 grid grid-cols-3 gap-3 flex-shrink-0">
+                        <div class="text-center p-3 rounded-xl bg-slate-50">
+                            <p class="text-2xl font-bold text-slate-800">{{ annReport.data.total }}</p>
+                            <p class="text-[11px] text-slate-500 font-medium">Người nhận</p>
+                        </div>
+                        <div class="text-center p-3 rounded-xl bg-emerald-50">
+                            <p class="text-2xl font-bold text-emerald-600">{{ annReport.data.read_count }}</p>
+                            <p class="text-[11px] text-emerald-600 font-medium">Đã đọc</p>
+                        </div>
+                        <div class="text-center p-3 rounded-xl bg-red-50">
+                            <p class="text-2xl font-bold text-red-600">{{ annReport.data.total - annReport.data.read_count }}</p>
+                            <p class="text-[11px] text-red-600 font-medium">Chưa đọc</p>
+                        </div>
+                    </div>
+
+                    <div class="px-6 flex gap-2 flex-shrink-0">
+                        <button v-for="t in [{k:'all',l:'Tất cả'},{k:'read',l:'Đã đọc'},{k:'unread',l:'Chưa đọc'}]" :key="t.k"
+                            @click="annReport.tab = t.k"
+                            :class="annReport.tab === t.k ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                            class="px-3 py-1.5 rounded-lg text-xs font-semibold transition">{{ t.l }}</button>
+                    </div>
+
+                    <div class="p-6 pt-3 overflow-y-auto flex-1">
+                        <div class="space-y-1.5">
+                            <div v-for="r in reportRows" :key="r.id" class="flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition">
+                                <div class="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-xs font-bold text-brand-700 flex-shrink-0">
+                                    {{ (r.name || '?').charAt(0) }}
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-sm font-medium text-slate-700 truncate">{{ r.name }}</p>
+                                    <p class="text-[11px] text-slate-400 truncate">{{ r.department || '—' }}</p>
+                                </div>
+                                <span v-if="r.confirmed" class="px-2 py-1 rounded-lg bg-emerald-100 text-emerald-700 text-[10px] font-bold">ĐÃ XÁC NHẬN</span>
+                                <span v-else-if="r.read" class="px-2 py-1 rounded-lg bg-blue-100 text-blue-700 text-[10px] font-bold">ĐÃ ĐỌC</span>
+                                <span v-else class="px-2 py-1 rounded-lg bg-slate-100 text-slate-500 text-[10px] font-bold">CHƯA ĐỌC</span>
+                            </div>
+                            <p v-if="reportRows.length === 0" class="text-center text-sm text-slate-400 py-8">Không có ai trong mục này</p>
+                        </div>
+                    </div>
+
+                    <div class="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 flex-shrink-0 bg-slate-50/50">
+                        <button @click="annReport.open = false" class="btn btn-secondary">Đóng</button>
+                        <button @click="remindUnread" :disabled="annReport.sending || annReport.data.read_count >= annReport.data.total" class="btn btn-primary disabled:opacity-40">
+                            <iconify-icon icon="solar:bell-bing-bold" width="18"></iconify-icon>
+                            {{ annReport.sending ? 'Đang gửi...' : 'Nhắc người chưa đọc' }}
+                        </button>
+                    </div>
+                </template>
+            </div>
+        </div>
+
         <!-- Toast Container -->
         <div class="toast-container" id="toastContainer">
             <div v-for="toast in toasts" :key="toast.id" 
@@ -5278,6 +5822,7 @@
                     { label: 'Tiến độ', icon: 'solar:chart-square-bold', to: 'progress' },
                     { label: 'Lịch', icon: 'solar:history-bold', to: 'timeline' },
                     { label: 'Thông báo', icon: 'solar:bell-bold', to: 'notifications' },
+                    { label: 'Thông báo NB', icon: 'solar:megaphone-bold', to: 'announcements' },
                     { label: 'Cài đặt', icon: 'solar:settings-bold', to: 'settings' }
                 ]
 
@@ -5287,12 +5832,12 @@
                     return menuLinks.filter(function(l) {
                         if (role === 'Owner') return true
                         if (role === 'Manager') return ['categories', 'departments'].indexOf(l.to) === -1
-                        if (role === 'Member') return ['dashboard', 'tasks', 'progress', 'timeline', 'gantt', 'projects', 'notifications', 'settings'].indexOf(l.to) > -1
-                        return ['dashboard', 'tasks', 'progress', 'timeline', 'projects', 'notifications', 'settings'].indexOf(l.to) > -1
+                        if (role === 'Member') return ['dashboard', 'tasks', 'progress', 'timeline', 'gantt', 'projects', 'notifications', 'announcements', 'settings'].indexOf(l.to) > -1
+                        return ['dashboard', 'tasks', 'progress', 'timeline', 'projects', 'notifications', 'announcements', 'settings'].indexOf(l.to) > -1
                     })
                 })
 
-                const data = reactive({ departments: [], employees: [], tasks: [], categories: [], projects: [], notifications: [] })
+                const data = reactive({ departments: [], employees: [], tasks: [], categories: [], projects: [], notifications: [], announcements: [] })
                 const stats = ref({}), settings = ref({})
                 const chartInstances = {}
                 const loginForm = reactive({ username: '', password: '' }), authLoading = ref(false), authError = ref(''), errors = reactive({})
@@ -5687,6 +6232,27 @@
                     closeConfirmDialog()
                 }
 
+                // Hộp thoại nhập liệu (thay prompt() vì bị chặn trong iframe Apps Script)
+                const promptDialog = reactive({ open: false, title: '', label: '', placeholder: '', value: '', resolve: null })
+                const showPrompt = (opts) => {
+                    return new Promise(function(resolve) {
+                        promptDialog.title = (opts && opts.title) || 'Nhập thông tin'
+                        promptDialog.label = (opts && opts.label) || ''
+                        promptDialog.placeholder = (opts && opts.placeholder) || ''
+                        promptDialog.value = (opts && opts.value) || ''
+                        promptDialog.resolve = resolve
+                        promptDialog.open = true
+                    })
+                }
+                const handlePromptOk = () => {
+                    if (promptDialog.resolve) promptDialog.resolve(promptDialog.value)
+                    promptDialog.open = false
+                }
+                const handlePromptCancel = () => {
+                    if (promptDialog.resolve) promptDialog.resolve(null)
+                    promptDialog.open = false
+                }
+
                 const pageTitle = computed(() => {
                     if (currentRoute.value === 'projectDetail' && selectedProject.value) return selectedProject.value.name;
                     var found = menuLinks.find(l => l.to === currentRoute.value); return (found && found.label) || '';
@@ -5966,6 +6532,405 @@
                     return data.notifications.slice(start, start + pagination.notifications.perPage)
                 })
 
+                // ===================== THÔNG BÁO NỘI BỘ (ANNOUNCEMENTS) =====================
+                const savedFilters = ref([])
+                const showAnnAdvanced = ref(false)
+                const dismissedBanners = ref(JSON.parse(localStorage.getItem('ann_dismissed') || '[]'))
+                const annFilter = reactive({ tab: 'all', time: 'all', search: '', dept: 'all', author: 'all', status: 'all', tags: [] })
+                const annDetail = reactive({ open: false, data: {}, acknowledged: false, saving: false })
+                const annReport = reactive({ open: false, loading: false, sending: false, tab: 'all', id: '', data: { rows: [], total: 0, read_count: 0 } })
+                const annEditor = reactive({
+                    open: false, id: null, saving: false, scheduled: false, tagInput: '',
+                    form: { title: '', content: '', priority: 'normal', scope: 'all', department_ids: [], employee_ids: [], mentioned_ids: [], tags: [], attachments: [], published_at: '' }
+                })
+                const annEditorBody = ref(null), annImageInput = ref(null), annFileInput = ref(null)
+                const pendingAnnouncementId = ref('')  // deep link ?ann_id=
+
+                const annQuickTabs = [
+                    { key: 'all', label: 'Tất cả', icon: 'solar:list-bold' },
+                    { key: 'unread', label: 'Chưa đọc', icon: 'solar:letter-unread-bold' },
+                    { key: 'priority', label: 'Quan trọng / Khẩn', icon: 'solar:danger-triangle-bold' },
+                    { key: 'attachment', label: 'Có đính kèm', icon: 'solar:paperclip-bold' },
+                    { key: 'mentioned', label: 'Nhắc tên tôi', icon: 'solar:mention-circle-bold' }
+                ]
+                const annEditorTools = [
+                    { cmd: 'bold', icon: 'solar:text-bold-bold', title: 'Đậm' },
+                    { cmd: 'italic', icon: 'solar:text-italic-bold', title: 'Nghiêng' },
+                    { cmd: 'underline', icon: 'solar:text-underline-bold', title: 'Gạch chân' },
+                    { cmd: 'insertUnorderedList', icon: 'solar:list-bold', title: 'Danh sách' },
+                    { cmd: 'insertOrderedList', icon: 'solar:sort-by-alphabet-bold', title: 'Danh sách đánh số' },
+                    { cmd: 'formatBlock', value: '<h3>', icon: 'solar:text-square-bold', title: 'Tiêu đề' }
+                ]
+
+                const canPublishAnnouncement = computed(() => currentUser.value && currentUser.value.role !== 'Member')
+                const stripHtml = (h) => String(h || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+                const formatDateTime = (s) => {
+                    if (!s) return ''
+                    var d = new Date(s)
+                    if (isNaN(d.getTime())) return ''
+                    return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                }
+                const employeeName = (id) => {
+                    if (!id) return '—'
+                    if (currentUser.value && id === currentUser.value.id) return currentUser.value.name
+                    var e = data.employees.find(x => x.id === id)
+                    return e ? e.name : 'Quản trị viên'
+                }
+                const toggleArrayItem = (arr, val) => {
+                    var i = arr.indexOf(val)
+                    if (i > -1) arr.splice(i, 1); else arr.push(val)
+                }
+
+                // Chỉ tính thông báo đã đăng (bỏ nháp/hẹn giờ mà người quản lý nhìn thấy)
+                const visibleAnnouncements = computed(() => data.announcements.filter(a => a.status === 'published'))
+                const annUnreadCount = computed(() => visibleAnnouncements.value.filter(a => !a.read).length)
+
+                const bannerAnnouncement = computed(() => {
+                    return visibleAnnouncements.value.find(a =>
+                        !a.read && a.priority !== 'normal' && dismissedBanners.value.indexOf(a.id) === -1
+                    ) || null
+                })
+                const dismissBanner = (id) => {
+                    dismissedBanners.value.push(id)
+                    localStorage.setItem('ann_dismissed', JSON.stringify(dismissedBanners.value))
+                }
+
+                const annTagOptions = computed(() => {
+                    var all = []
+                    data.announcements.forEach(a => (a.tags || []).forEach(t => { if (all.indexOf(t) === -1) all.push(t) }))
+                    return all.sort()
+                })
+                const toggleAnnTag = (tag) => toggleArrayItem(annFilter.tags, tag)
+
+                const annTimeCutoff = () => {
+                    var now = new Date()
+                    if (annFilter.time === 'today') return new Date(now.getFullYear(), now.getMonth(), now.getDate())
+                    if (annFilter.time === 'week') {
+                        var day = now.getDay() === 0 ? 7 : now.getDay()
+                        var monday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+                        monday.setDate(monday.getDate() - (day - 1))
+                        return monday
+                    }
+                    if (annFilter.time === 'month') return new Date(now.getFullYear(), now.getMonth(), 1)
+                    return null
+                }
+
+                const matchAnnTab = (a, tab) => {
+                    if (tab === 'unread') return !a.read
+                    if (tab === 'priority') return a.priority !== 'normal'
+                    if (tab === 'attachment') return (a.attachments || []).length > 0
+                    if (tab === 'mentioned') return a.mentioned_me
+                    return true
+                }
+
+                const filteredAnnouncements = computed(() => {
+                    var cutoff = annTimeCutoff()
+                    var q = annFilter.search.trim().toLowerCase()
+                    return data.announcements.filter(a => {
+                        if (!matchAnnTab(a, annFilter.tab)) return false
+                        if (annFilter.status !== 'all' && a.status !== annFilter.status) return false
+                        if (annFilter.dept !== 'all' && a.publisher_dept_id !== annFilter.dept) return false
+                        if (annFilter.author !== 'all' && a.created_by !== annFilter.author) return false
+                        if (annFilter.tags.length > 0 && !annFilter.tags.some(t => (a.tags || []).indexOf(t) > -1)) return false
+                        if (cutoff) {
+                            var d = new Date(a.published_at || a.created_at)
+                            if (isNaN(d.getTime()) || d < cutoff) return false
+                        }
+                        if (q) {
+                            var hay = (a.title || '') + ' ' + stripHtml(a.content) + ' ' +
+                                (a.attachments || []).map(f => f.name || '').join(' ') + ' ' + (a.tags || []).join(' ')
+                            if (hay.toLowerCase().indexOf(q) === -1) return false
+                        }
+                        return true
+                    })
+                })
+
+                const annTabCounts = computed(() => {
+                    var counts = {}
+                    annQuickTabs.forEach(t => {
+                        counts[t.key] = data.announcements.filter(a => matchAnnTab(a, t.key)).length
+                    })
+                    return counts
+                })
+                const annAdvancedCount = computed(() => {
+                    var n = 0
+                    if (annFilter.dept !== 'all') n++
+                    if (annFilter.author !== 'all') n++
+                    if (annFilter.status !== 'all') n++
+                    if (annFilter.tags.length > 0) n++
+                    return n
+                })
+                const resetAnnFilters = () => {
+                    annFilter.dept = 'all'; annFilter.author = 'all'; annFilter.status = 'all'
+                    annFilter.tags = []; annFilter.search = ''; annFilter.time = 'all'; annFilter.tab = 'all'
+                }
+
+                // ===== Tải dữ liệu =====
+                const loadAnnouncements = async () => {
+                    if (!currentUser.value) return
+                    try {
+                        var res = await api.getAnnouncements(currentUser.value.role, currentUser.value.id)
+                        data.announcements = typeof res === 'string' ? JSON.parse(res) : (res || [])
+
+                        // Deep link ?ann_id= : mở đúng thông báo được nhắc
+                        if (pendingAnnouncementId.value) {
+                            var target = data.announcements.find(a => a.id === pendingAnnouncementId.value)
+                            pendingAnnouncementId.value = ''
+                            if (target) { navigate('announcements'); openAnnouncement(target); return }
+                        }
+
+                        // Pop-up bắt buộc: thông báo khẩn chưa xác nhận
+                        var mandatory = visibleAnnouncements.value.find(a => a.priority === 'urgent' && !a.confirmed)
+                        if (mandatory && !annDetail.open) openAnnouncement(mandatory)
+                    } catch (e) {
+                        console.error('Load announcements error:', e)
+                    }
+                }
+                const loadSavedFilters = async () => {
+                    if (!currentUser.value) return
+                    try {
+                        var res = await api.getSavedFilters(currentUser.value.id)
+                        savedFilters.value = typeof res === 'string' ? JSON.parse(res) : (res || [])
+                    } catch (e) { console.error('Load saved filters error:', e) }
+                }
+
+                // ===== Xem / xác nhận =====
+                const annMustConfirm = computed(() =>
+                    annDetail.open && annDetail.data.priority === 'urgent' && !annDetail.data.confirmed
+                )
+                const openAnnouncement = (a) => {
+                    annDetail.data = a
+                    annDetail.acknowledged = false
+                    annDetail.open = true
+                    // Thông báo thường: ghi nhận đã đọc ngay khi mở
+                    if (!a.read && a.priority !== 'urgent') {
+                        a.read = true
+                        a.read_count = (a.read_count || 0) + 1
+                        api.markAnnouncementRead(a.id, currentUser.value.id, false).catch(e => console.error(e))
+                    }
+                }
+                const closeAnnouncement = () => { annDetail.open = false }
+                const confirmAnnouncement = async () => {
+                    annDetail.saving = true
+                    try {
+                        var res = await api.markAnnouncementRead(annDetail.data.id, currentUser.value.id, true)
+                        if (res && res.success === false) { showToast('error', res.message); return }
+                        annDetail.data.read = true
+                        annDetail.data.confirmed = true
+                        annDetail.data.read_count = (annDetail.data.read_count || 0) + 1
+                        annDetail.open = false
+                        showToast('success', 'Đã ghi nhận xác nhận của bạn')
+                        // Còn thông báo khẩn khác chưa xác nhận thì hiện tiếp
+                        var next = visibleAnnouncements.value.find(a => a.priority === 'urgent' && !a.confirmed)
+                        if (next) nextTick(() => openAnnouncement(next))
+                    } catch (e) {
+                        showToast('error', 'Lỗi xác nhận: ' + e)
+                    } finally { annDetail.saving = false }
+                }
+
+                // ===== Bộ lọc đã lưu =====
+                const saveCurrentFilter = async () => {
+                    var name = await showPrompt({ title: 'Lưu bộ lọc', label: 'Đặt tên cho bộ lọc này', placeholder: 'VD: Thông báo lương chưa đọc' })
+                    if (!name || !name.trim()) return
+                    var config = {
+                        tab: annFilter.tab, time: annFilter.time, search: annFilter.search,
+                        dept: annFilter.dept, author: annFilter.author, status: annFilter.status,
+                        tags: annFilter.tags.slice()
+                    }
+                    try {
+                        await api.saveFilter(currentUser.value.id, name.trim(), config)
+                        await loadSavedFilters()
+                        showToast('success', 'Đã lưu bộ lọc')
+                    } catch (e) { showToast('error', 'Lỗi lưu bộ lọc: ' + e) }
+                }
+                const applySavedFilter = (f) => {
+                    var c = f.config || {}
+                    annFilter.tab = c.tab || 'all'
+                    annFilter.time = c.time || 'all'
+                    annFilter.search = c.search || ''
+                    annFilter.dept = c.dept || 'all'
+                    annFilter.author = c.author || 'all'
+                    annFilter.status = c.status || 'all'
+                    annFilter.tags = (c.tags || []).slice()
+                }
+                const removeSavedFilter = async (f) => {
+                    var ok = await showConfirm({ title: 'Xóa bộ lọc', message: 'Xóa bộ lọc "' + f.name + '"?' })
+                    if (!ok) return
+                    try {
+                        await api.deleteSavedFilter(f.id)
+                        await loadSavedFilters()
+                    } catch (e) { showToast('error', 'Lỗi xóa bộ lọc: ' + e) }
+                }
+
+                // ===== Soạn thảo =====
+                const openAnnouncementEditor = (a) => {
+                    annEditor.id = a ? a.id : null
+                    annEditor.saving = false
+                    annEditor.tagInput = ''
+                    annEditor.scheduled = !!(a && a.status === 'scheduled')
+                    annEditor.form = {
+                        title: a ? a.title : '',
+                        content: a ? a.content : '',
+                        priority: a ? a.priority : 'normal',
+                        scope: a ? a.scope : 'all',
+                        department_ids: a ? (a.department_ids || []).slice() : [],
+                        employee_ids: a ? (a.employee_ids || []).slice() : [],
+                        mentioned_ids: a ? (a.mentioned_ids || []).slice() : [],
+                        tags: a ? (a.tags || []).slice() : [],
+                        attachments: a ? (a.attachments || []).slice() : [],
+                        published_at: a && a.published_at ? String(a.published_at).substring(0, 16) : ''
+                    }
+                    annEditor.open = true
+                    nextTick(() => { if (annEditorBody.value) annEditorBody.value.innerHTML = annEditor.form.content || '' })
+                }
+                const execEditor = (cmd, value) => {
+                    if (annEditorBody.value) annEditorBody.value.focus()
+                    document.execCommand(cmd, false, value || null)
+                }
+                const insertEditorTable = async () => {
+                    var size = await showPrompt({ title: 'Chèn bảng', label: 'Kích thước bảng (dòng x cột)', value: '3x3', placeholder: 'VD: 3x4' })
+                    if (!size) return
+                    var m = String(size).toLowerCase().split('x')
+                    var rows = parseInt(m[0], 10), cols = parseInt(m[1], 10)
+                    if (!rows || !cols || rows < 1 || cols < 1) { showToast('error', 'Định dạng không hợp lệ, ví dụ đúng: 3x4'); return }
+                    var html = '<table>'
+                    for (var r = 0; r < rows; r++) {
+                        html += '<tr>'
+                        for (var c = 0; c < cols; c++) html += '<td>&nbsp;</td>'
+                        html += '</tr>'
+                    }
+                    html += '</table><p><br></p>'
+                    execEditor('insertHTML', html)
+                }
+                const insertEditorLink = async () => {
+                    var url = await showPrompt({ title: 'Chèn liên kết', label: 'Đường dẫn (URL hoặc link file/thư mục Drive)', placeholder: 'https://...' })
+                    if (!url) return
+                    execEditor('createLink', url)
+                }
+                const insertEditorImage = async (event) => {
+                    var file = event.target.files[0]
+                    event.target.value = ''
+                    if (!file) return
+                    try {
+                        showToast('info', 'Đang tải ảnh lên...')
+                        var res = await uploadFileToDriveClient(file)
+                        if (!res || !res.success) throw new Error((res && res.message) || 'Tải ảnh thất bại')
+                        execEditor('insertHTML', '<img src="https://lh3.googleusercontent.com/d/' + res.id + '">')
+                    } catch (e) { showToast('error', 'Lỗi chèn ảnh: ' + e.message) }
+                }
+                const addEditorTag = () => {
+                    var t = annEditor.tagInput.trim().replace(/^#/, '')
+                    if (t && annEditor.form.tags.indexOf(t) === -1) annEditor.form.tags.push(t)
+                    annEditor.tagInput = ''
+                }
+                const handleAnnDrop = (e) => { handleAnnFiles(e.dataTransfer.files) }
+                const handleAnnFiles = async (fileList) => {
+                    var files = Array.prototype.slice.call(fileList || [])
+                    for (var i = 0; i < files.length; i++) {
+                        var placeholder = reactive({ name: files[i].name, uploading: true })
+                        annEditor.form.attachments.push(placeholder)
+                        try {
+                            var res = await uploadFileToDriveClient(files[i])
+                            if (!res || !res.success) throw new Error((res && res.message) || 'Tải lên thất bại')
+                            placeholder.id = res.id
+                            placeholder.url = res.url
+                            placeholder.downloadUrl = res.downloadUrl || res.url
+                            placeholder.uploading = false
+                        } catch (err) {
+                            var idx = annEditor.form.attachments.indexOf(placeholder)
+                            if (idx > -1) annEditor.form.attachments.splice(idx, 1)
+                            showToast('error', 'Tải file thất bại: ' + err.message)
+                        }
+                    }
+                }
+                const submitAnnouncement = async (status) => {
+                    annEditor.form.content = annEditorBody.value ? annEditorBody.value.innerHTML : ''
+                    if (!annEditor.form.title.trim()) { showToast('error', 'Vui lòng nhập tiêu đề'); return }
+                    if (!stripHtml(annEditor.form.content)) { showToast('error', 'Vui lòng nhập nội dung'); return }
+                    if (annEditor.form.scope === 'departments' && annEditor.form.department_ids.length === 0) {
+                        showToast('error', 'Vui lòng chọn ít nhất 1 phòng ban'); return
+                    }
+                    if (annEditor.form.scope === 'employees' && annEditor.form.employee_ids.length === 0) {
+                        showToast('error', 'Vui lòng chọn ít nhất 1 nhân viên'); return
+                    }
+                    if (status === 'scheduled' && !annEditor.form.published_at) {
+                        showToast('error', 'Vui lòng chọn thời gian đăng'); return
+                    }
+                    if (annEditor.form.attachments.some(f => f.uploading)) {
+                        showToast('error', 'Vui lòng đợi tải file xong'); return
+                    }
+
+                    annEditor.saving = true
+                    var payload = {
+                        title: annEditor.form.title.trim(),
+                        content: annEditor.form.content,
+                        priority: annEditor.form.priority,
+                        scope: annEditor.form.scope,
+                        department_ids: annEditor.form.department_ids,
+                        employee_ids: annEditor.form.employee_ids,
+                        mentioned_ids: annEditor.form.mentioned_ids,
+                        tags: annEditor.form.tags,
+                        attachments: annEditor.form.attachments.map(f => ({ id: f.id, name: f.name, url: f.url, downloadUrl: f.downloadUrl })),
+                        status: status,
+                        published_at: annEditor.scheduled ? annEditor.form.published_at : ''
+                    }
+                    try {
+                        var res = annEditor.id
+                            ? await api.updateAnnouncement(annEditor.id, payload)
+                            : await api.createAnnouncement(payload, currentUser.value.id)
+                        if (res && res.success === false) { showToast('error', res.message); return }
+                        annEditor.open = false
+                        showToast('success', status === 'draft' ? 'Đã lưu bản nháp'
+                            : (status === 'scheduled' ? 'Đã đặt lịch đăng thông báo' : 'Đã đăng thông báo'))
+                        await loadAnnouncements()
+                    } catch (e) {
+                        showToast('error', 'Lỗi lưu thông báo: ' + e)
+                    } finally { annEditor.saving = false }
+                }
+                const removeAnnouncement = async (a) => {
+                    var ok = await showConfirm({ title: 'Xóa thông báo', message: 'Xóa thông báo "' + a.title + '"? Hành động này không thể hoàn tác.' })
+                    if (!ok) return
+                    try {
+                        await api.deleteAnnouncement(a.id)
+                        showToast('success', 'Đã xóa thông báo')
+                        await loadAnnouncements()
+                    } catch (e) { showToast('error', 'Lỗi xóa thông báo: ' + e) }
+                }
+
+                // ===== Báo cáo đã đọc / nhắc nhở =====
+                const openReadReport = async (a) => {
+                    annReport.open = true
+                    annReport.loading = true
+                    annReport.tab = 'all'
+                    annReport.id = a.id
+                    annReport.data = { title: a.title, rows: [], total: 0, read_count: 0, confirmed_count: 0 }
+                    try {
+                        var res = await api.getAnnouncementReadReport(a.id)
+                        var parsed = typeof res === 'string' ? JSON.parse(res) : res
+                        if (parsed && parsed.success === false) { showToast('error', parsed.message); annReport.open = false; return }
+                        annReport.data = parsed
+                    } catch (e) {
+                        showToast('error', 'Lỗi tải báo cáo: ' + e)
+                        annReport.open = false
+                    } finally { annReport.loading = false }
+                }
+                const reportRows = computed(() => {
+                    var rows = annReport.data.rows || []
+                    if (annReport.tab === 'read') return rows.filter(r => r.read)
+                    if (annReport.tab === 'unread') return rows.filter(r => !r.read)
+                    return rows
+                })
+                const remindUnread = async () => {
+                    annReport.sending = true
+                    try {
+                        var res = await api.sendAnnouncementReminder(annReport.id)
+                        var parsed = typeof res === 'string' ? JSON.parse(res) : res
+                        showToast(parsed && parsed.success ? 'success' : 'error', (parsed && parsed.message) || 'Đã gửi nhắc nhở')
+                    } catch (e) {
+                        showToast('error', 'Lỗi gửi nhắc nhở: ' + e)
+                    } finally { annReport.sending = false }
+                }
+
                 // Reset page to 1 when search query changes
                 watch(searchQuery, () => {
                     pagination.tasks.page = 1
@@ -6136,8 +7101,10 @@
                     // Check deep link via GAS API
                     if (typeof google !== 'undefined' && google.script && google.script.url) {
                         google.script.url.getLocation(function(location) {
-                            if (location.parameters && location.parameters.task_id) {
-                                checkPendingTask(location.parameters.task_id[0]);
+                            var params = location.parameters || {};
+                            if (params.ann_id) pendingAnnouncementId.value = params.ann_id[0];
+                            if (params.task_id) {
+                                checkPendingTask(params.task_id[0]);
                             } else {
                                 checkPendingTask();
                             }
@@ -6145,6 +7112,8 @@
                     } else {
                         // Fallback
                         const urlParams = new URLSearchParams(window.location.search);
+                        const annId = urlParams.get('ann_id');
+                        if (annId) pendingAnnouncementId.value = annId;
                         const taskId = urlParams.get('task_id');
                         checkPendingTask(taskId);
                     }
@@ -6160,9 +7129,13 @@
                         settings.value = result.settings || {};
                         stats.value = result.stats || {};
                         data.notifications = result.notifications || [];
-                        
+
                         // Hide global loading early so UI renders immediately
                         globalLoading.value = false;
+
+                        // Thông báo nội bộ + bộ lọc đã lưu (nền, không chặn UI)
+                        loadAnnouncements();
+                        loadSavedFilters();
 
                         // Background load extended data
                         api.getExtendedData(currentUser.value.role, currentUser.value.id, currentUser.value.department_id).then(function(rawExt) {
@@ -6701,6 +7674,7 @@
                         data.notifications = result.notifications || [];
                         settings.value = result.settings || {};
                         stats.value = result.stats || {};
+                        loadAnnouncements();
                         if (currentRoute.value === 'dashboard') {
                             nextTick(function() { setTimeout(function() { renderAllCharts(stats.value); }, 200); });
                         }
@@ -7623,7 +8597,17 @@
                     openProjectTasks, openDeptEmployees, openEmployeeTasks, openCategoryTasks,
                     projectTasksModal, deptEmployeesModal, employeeTasksModal, categoryTasksModal,
                     showCredentials, toggleCredentials, greetingTime, attentionTasks, formatRelativeDate,
-                    ganttMonth, ganttYear, ganttSearchQuery, ganttExpanded, ganttPrevMonth, ganttNextMonth, ganttGoToday, toggleGanttGroup, ganttDays, ganttGroups, getGanttBar, getGanttBarStyle, ganttBarLabel
+                    ganttMonth, ganttYear, ganttSearchQuery, ganttExpanded, ganttPrevMonth, ganttNextMonth, ganttGoToday, toggleGanttGroup, ganttDays, ganttGroups, getGanttBar, getGanttBarStyle, ganttBarLabel,
+                    promptDialog, handlePromptOk, handlePromptCancel,
+                    annFilter, annQuickTabs, annTabCounts, annTagOptions, toggleAnnTag, showAnnAdvanced, annAdvancedCount, resetAnnFilters,
+                    filteredAnnouncements, annUnreadCount, bannerAnnouncement, dismissBanner, canPublishAnnouncement,
+                    stripHtml, formatDateTime, employeeName, toggleArrayItem,
+                    savedFilters, saveCurrentFilter, applySavedFilter, removeSavedFilter,
+                    annDetail, annMustConfirm, openAnnouncement, closeAnnouncement, confirmAnnouncement,
+                    annEditor, annEditorTools, annEditorBody, annImageInput, annFileInput,
+                    openAnnouncementEditor, execEditor, insertEditorTable, insertEditorLink, insertEditorImage,
+                    addEditorTag, handleAnnDrop, handleAnnFiles, submitAnnouncement, removeAnnouncement,
+                    annReport, openReadReport, reportRows, remindUnread
                 }
             }
         }).mount('#app')
