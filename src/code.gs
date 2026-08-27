@@ -12,7 +12,9 @@ const SHEET_NAMES = {
     TASKS: 'Nhiệm Vụ',
     PROJECTS: 'Dự Án',
     COMMENTS: 'Bình Luận',
-    NOTIFICATIONS: 'Thông Báo'
+    NOTIFICATIONS: 'Thông Báo',
+    ANNOUNCEMENTS: 'Thông Báo NB',
+    SAVED_FILTERS: 'Bộ Lọc TB'
 };
 
 // ============ WEB APP ENTRY ============
@@ -194,6 +196,93 @@ function parseIds(str) {
     return (str || '').toString().split(',').map(function(x) { return x.trim(); }).filter(function(x) { return x; });
 }
 
+// ============ PHÂN QUYỀN TẬP TRUNG ============
+// Thứ bậc: Owner > Director > Manager > Leader > Member
+//   Owner    : tài khoản gốc trong sheet Cài Đặt (kiêm vai trò BOD) - toàn quyền, toàn bộ dữ liệu
+//   Director : Giám đốc văn phòng - xem toàn bộ, KHÔNG quản trị hệ thống
+//   Manager  : quản lý NHIỀU phòng ban (cột 'ID Phòng ban' lưu CSV)
+//   Leader   : teamlead, phạm vi hẹp hơn Manager, KHÔNG được tạo dự án
+//   Member   : nhân viên, chỉ thấy việc của mình
+//
+// Toàn bộ logic "ai thấy gì / ai làm được gì" phải đi qua đây. Trước kia logic này bị
+// copy 3 bản ở getAllData/getTasks/getCoreData rồi lệch nhau, sinh lỗi phân quyền.
+var ROLE_RANK = { 'Owner': 5, 'Director': 4, 'Manager': 3, 'Leader': 2, 'Member': 1 };
+
+// Giá trị vai trò trong sheet có thể được gõ tay (viết hoa/thường khác nhau, nhãn tiếng Việt,
+// viết tắt). Trước kia chỉ cần lệch 1 ký tự là rơi vào nhánh fallback -> mất menu Gantt và
+// sai phân quyền. Bảng này quy mọi biến thể đã gặp về đúng 5 vai trò chuẩn.
+var ROLE_ALIASES = {
+    'owner': 'Owner', 'admin': 'Owner', 'bod': 'Owner', 'quản trị': 'Owner',
+    'director': 'Director', 'giám đốc': 'Director', 'giam doc': 'Director',
+    'giám đốc văn phòng': 'Director', 'gdvp': 'Director',
+    'manager': 'Manager', 'quản lý': 'Manager', 'quan ly': 'Manager', 'mgr': 'Manager',
+    'leader': 'Leader', 'lead': 'Leader', 'teamlead': 'Leader', 'team lead': 'Leader',
+    'trưởng nhóm': 'Leader', 'truong nhom': 'Leader', 'tl': 'Leader',
+    'member': 'Member', 'nhân viên': 'Member', 'nhan vien': 'Member', 'staff': 'Member'
+};
+
+// Quy giá trị thô trong sheet về vai trò chuẩn. Không nhận ra -> Member (quyền thấp nhất)
+// thay vì chặn sạch, để tài khoản vẫn dùng được mà không thể leo quyền.
+function normalizeRole(role) {
+    var raw = String(role === undefined || role === null ? '' : role).trim();
+    if (ROLE_RANK[raw]) return raw;
+    var mapped = ROLE_ALIASES[raw.toLowerCase()];
+    return mapped || 'Member';
+}
+
+function roleRank(role) {
+    return ROLE_RANK[normalizeRole(role)];
+}
+
+// Gói phạm vi dữ liệu của một người dùng
+function getScope(userRole, userId, userDeptId) {
+    var role = normalizeRole(userRole);
+    var rank = ROLE_RANK[role];
+    return {
+        role: role,
+        rank: rank,
+        userId: String(userId || '').trim(),
+        deptIds: parseIds(userDeptId),
+        seeAll: rank >= 4,              // Owner, Director
+        byDept: rank === 3 || rank === 2, // Manager, Leader
+        selfOnly: rank === 1            // Member
+    };
+}
+
+function canSeeTask(t, scope) {
+    if (scope.seeAll) return true;
+
+    var creator = String(t['ID Người tạo'] || '').trim();
+    var assignees = parseIds(t['ID Người thực hiện']);
+    var isMine = creator === scope.userId || assignees.indexOf(scope.userId) > -1;
+    if (scope.selfOnly) return isMine;
+
+    // Manager/Leader: việc trong phòng mình phụ trách, hoặc việc liên quan trực tiếp tới mình
+    var taskDept = String(t['ID Phòng ban'] || '').trim();
+    return scope.deptIds.indexOf(taskDept) > -1 || isMine;
+}
+
+// Quyền hành động. Dùng chung cho backend; frontend ẩn nút tương ứng nhưng
+// backend vẫn phải tự kiểm tra vì ẩn ở giao diện không phải là bảo vệ.
+function can(action, scope) {
+    switch (action) {
+        case 'manageSystem':   // cài đặt, phòng ban, workflow, xóa nhân viên
+            return scope.rank >= 5;
+        case 'deleteTask':
+            return scope.rank >= 5;
+        case 'viewPasswords':  // xem mật khẩu nhân viên
+            return scope.rank >= 5;
+        case 'createProject':  // Leader KHÔNG được tạo dự án
+            return scope.rank >= 3;
+        case 'editTaskDescription':
+            return scope.rank >= 2;
+        case 'assignTask':
+            return scope.rank >= 2;
+        default:
+            return false;
+    }
+}
+
 function ensureColumnExists(sheetName, colName) {
     var sheet = getSheet(sheetName);
     if (!sheet) return;
@@ -231,14 +320,16 @@ function getAllData(userRole, userId, userDeptId) {
         };
     });
     
-    // Process employees (Leader can now see & assign across all departments)
-    var filteredEmps = empsRaw;
-    var employees = filteredEmps.map(function(e) {
+    // Danh bạ nhân viên hiển thị cho mọi vai trò (cần để render tên/avatar người thực hiện),
+    // nhưng mật khẩu chỉ trả về cho người có quyền.
+    var scope = getScope(userRole, userId, userDeptId);
+    var showPwd = can('viewPasswords', scope);
+    var employees = empsRaw.map(function(e) {
         var deptIds = parseIds(e['ID Phòng ban']);
         var deptObjs = departments.filter(function(d) { return deptIds.indexOf(d.id) > -1; });
         return {
             id: e['ID'], name: e['Họ tên'], username: e['Tên đăng nhập'],
-            password: e['Mật khẩu'],
+            password: showPwd ? e['Mật khẩu'] : '',
             email: e['Email'], phone: formatPhone(e['Điện thoại']), avatar: e['Ảnh đại diện'],
             role: e['Vai trò'], department_id: deptIds[0] || '',
             department_ids: deptIds,
@@ -279,26 +370,8 @@ function getAllData(userRole, userId, userDeptId) {
     });
     
     // Process tasks
-    var filteredTasks = tasksRaw;
-    if (userRole === 'Member') {
-        filteredTasks = tasksRaw.filter(function(t) {
-            var rawVal = (t['ID Người thực hiện'] || '').toString();
-            var ids = rawVal.split(',').map(function(id) { return id.trim(); });
-            var targetId = String(userId).trim();
-            return ids.indexOf(targetId) > -1;
-        });
-    }
-    else if (userRole === 'Leader') {
-        var userDeptIds = parseIds(userDeptId);
-        var uidTrim = String(userId).trim();
-        filteredTasks = tasksRaw.filter(function(t) {
-            var taskDeptId = String(t['ID Phòng ban'] || '').trim();
-            var creatorId = String(t['ID Người tạo'] || '').trim();
-            var aIds = (t['ID Người thực hiện'] || '').toString().split(',').map(function(x) { return x.trim(); });
-            return userDeptIds.indexOf(taskDeptId) > -1 || creatorId === uidTrim || aIds.indexOf(uidTrim) > -1;
-        });
-    }
-    
+    var filteredTasks = tasksRaw.filter(function(t) { return canSeeTask(t, scope); });
+
     var tasks = filteredTasks.map(function(t) {
         var assigneeIdStr = (t['ID Người thực hiện'] || '').toString();
         var assigneeIds = assigneeIdStr ? assigneeIdStr.split(',').map(function(id) { return id.trim(); }) : [];
@@ -484,8 +557,8 @@ function computeDashboardStats(tasks, empsRaw, depts, cats, userRole) {
     return {
         totalTasks: totalTasks, doneTasks: doneTasks, inProgressTasks: inProgressTasks,
         todoTasks: todoTasks, overdueTasks: overdueTasks, completedThisMonth: completedThisMonth,
-        totalEmployees: userRole === 'Owner' ? empsRaw.length : 0,
-        totalDepartments: userRole === 'Owner' ? depts.length : 0,
+        totalEmployees: roleRank(userRole) >= 4 ? empsRaw.length : 0,
+        totalDepartments: roleRank(userRole) >= 4 ? depts.length : 0,
         chartWeekly: chartWeekly, chartStatus: chartStatus,
         chartCompletionTrend: chartCompletionTrend, chartByDept: chartByDept,
         chartByPriority: chartByPriority, chartByCategory: chartByCategory
@@ -663,8 +736,10 @@ function deleteDepartment(id) {
 }
 
 // ============ EMPLOYEES ============
-function getEmployees(userRole, userDeptId) {
-    // Leader (Manager) không còn bị giới hạn xem/giao việc trong phạm vi phòng mình nữa
+function getEmployees(userRole, userDeptId, userId) {
+    // Danh bạ mở cho mọi vai trò (cần để render người thực hiện), mật khẩu thì không.
+    var scope = getScope(userRole, userId, userDeptId);
+    var showPwd = can('viewPasswords', scope);
     let data = getSheetData(SHEET_NAMES.EMPLOYEES);
     const depts = getDepartments();
     return data.map(e => {
@@ -672,7 +747,7 @@ function getEmployees(userRole, userDeptId) {
         var deptObjs = depts.filter(d => deptIds.indexOf(d.id) > -1);
         return {
             id: e['ID'], name: e['Họ tên'], username: e['Tên đăng nhập'],
-            password: e['Mật khẩu'],
+            password: showPwd ? e['Mật khẩu'] : '',
             email: e['Email'], phone: formatPhone(e['Điện thoại']), avatar: e['Ảnh đại diện'],
             role: e['Vai trò'], department_id: deptIds[0] || '',
             department_ids: deptIds,
@@ -786,23 +861,8 @@ function getTasks(userRole, userId, userDeptId) {
         let data = getSheetData(SHEET_NAMES.TASKS);
         console.log('getTasks - raw data count:', data.length, 'userRole:', userRole);
 
-        if (userRole === 'Member') {
-            data = data.filter(t => {
-                const assigneeIds = (t['ID Người thực hiện'] || '').toString().split(',').map(id => id.trim());
-                return assigneeIds.indexOf(userId) > -1;
-            });
-        }
-        else if (userRole === 'Leader') {
-            var leaderDeptIds = parseIds(userDeptId);
-            var leaderUid = String(userId).trim();
-            data = data.filter(t => {
-                var taskDeptId = String(t['ID Phòng ban'] || '').trim();
-                var creatorId = String(t['ID Người tạo'] || '').trim();
-                var aIds = (t['ID Người thực hiện'] || '').toString().split(',').map(x => x.trim());
-                return leaderDeptIds.indexOf(taskDeptId) > -1 || creatorId === leaderUid || aIds.indexOf(leaderUid) > -1;
-            });
-        }
-        else if (userRole !== 'Owner') return []; // Fallback security
+        var scope = getScope(userRole, userId, userDeptId);
+        data = data.filter(t => canSeeTask(t, scope));
 
         const emps = getSheetData(SHEET_NAMES.EMPLOYEES);
         const cats = getCategories();
@@ -897,7 +957,7 @@ function updateTask(id, data, userRole, userId) {
     // Bỏ hạn chế Member chuyển trạng thái Done theo kế hoạch đã thống nhất
     const updates = {};
     if (data.title) updates['Tiêu đề'] = data.title;
-    if ((userRole === 'Owner' || userRole === 'Leader') && data.description !== undefined) updates['Mô tả'] = data.description;
+    if (can('editTaskDescription', getScope(userRole, userId, null)) && data.description !== undefined) updates['Mô tả'] = data.description;
     
     const oldAssigneeIdStr = (task['ID Người thực hiện'] || '').toString();
     const oldAssigneeIds = oldAssigneeIdStr ? oldAssigneeIdStr.split(',').map(id => id.trim()) : [];
@@ -1018,7 +1078,7 @@ function toggleTaskStar(taskId, userId) {
 
 function deleteTask(id, userRole) {
     // Chỉ Owner mới được xóa nhiệm vụ
-    if (userRole !== 'Owner') return { success: false, message: 'Bạn không có quyền xóa nhiệm vụ' };
+    if (!can('deleteTask', getScope(userRole, null, null))) return { success: false, message: 'Bạn không có quyền xóa nhiệm vụ' };
     const task = findRowByColumn(SHEET_NAMES.TASKS, 'ID', id);
     if (task) { deleteRow(SHEET_NAMES.TASKS, task._rowIndex); return { success: true }; }
     return { success: false };
@@ -1229,8 +1289,8 @@ function getDashboardStats(userRole, userId, userDeptId) {
         return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
     }).length;
 
-    const emps = userRole === 'Owner' ? getSheetData(SHEET_NAMES.EMPLOYEES) : [];
-    const depts = userRole === 'Owner' ? getDepartments() : [];
+    const emps = roleRank(userRole) >= 4 ? getSheetData(SHEET_NAMES.EMPLOYEES) : [];
+    const depts = roleRank(userRole) >= 4 ? getDepartments() : [];
     const cats = getCategories();
 
     // Chart 1: Bar - tasks by status per day (last 7 days)
@@ -1492,14 +1552,14 @@ function setupAllSheets() {
     var empHeaders = ['ID', 'Họ tên', 'Tên đăng nhập', 'Mật khẩu', 'Email', 'Điện thoại', 'Ảnh đại diện', 'Vai trò', 'ID Phòng ban', 'Ngày tạo', 'Telegram Chat ID'];
     var empSheet = _createSheet(ss, SHEET_NAMES.EMPLOYEES, empHeaders);
     var emps = [
-        { 'ID': 'nv_001', 'Họ tên': 'Trần Minh Tuấn', 'Tên đăng nhập': 'tuan', 'Mật khẩu': '123', 'Email': 'tuan@coogo.vn.com', 'Điện thoại': '0912345001', 'Ảnh đại diện': '', 'Vai trò': 'Leader', 'ID Phòng ban': 'pb_001', 'Ngày tạo': _iso(-58) },
+        { 'ID': 'nv_001', 'Họ tên': 'Trần Minh Tuấn', 'Tên đăng nhập': 'tuan', 'Mật khẩu': '123', 'Email': 'tuan@coogo.vn.com', 'Điện thoại': '0912345001', 'Ảnh đại diện': '', 'Vai trò': 'Manager', 'ID Phòng ban': 'pb_001', 'Ngày tạo': _iso(-58) },
         { 'ID': 'nv_002', 'Họ tên': 'Lê Thị Hương', 'Tên đăng nhập': 'huong', 'Mật khẩu': '123', 'Email': 'huong@coogo.vn.com', 'Điện thoại': '0912345002', 'Ảnh đại diện': '', 'Vai trò': 'Member', 'ID Phòng ban': 'pb_001', 'Ngày tạo': _iso(-55) },
         { 'ID': 'nv_003', 'Họ tên': 'Phạm Quốc Bảo', 'Tên đăng nhập': 'bao', 'Mật khẩu': '123', 'Email': 'bao@coogo.vn.com', 'Điện thoại': '0912345003', 'Ảnh đại diện': '', 'Vai trò': 'Member', 'ID Phòng ban': 'pb_001', 'Ngày tạo': _iso(-50) },
-        { 'ID': 'nv_004', 'Họ tên': 'Nguyễn Thị Lan', 'Tên đăng nhập': 'lan', 'Mật khẩu': '123', 'Email': 'lan@coogo.vn.com', 'Điện thoại': '0912345004', 'Ảnh đại diện': '', 'Vai trò': 'Leader', 'ID Phòng ban': 'pb_002', 'Ngày tạo': _iso(-56) },
+        { 'ID': 'nv_004', 'Họ tên': 'Nguyễn Thị Lan', 'Tên đăng nhập': 'lan', 'Mật khẩu': '123', 'Email': 'lan@coogo.vn.com', 'Điện thoại': '0912345004', 'Ảnh đại diện': '', 'Vai trò': 'Manager', 'ID Phòng ban': 'pb_002', 'Ngày tạo': _iso(-56) },
         { 'ID': 'nv_005', 'Họ tên': 'Hoàng Đức Anh', 'Tên đăng nhập': 'anh', 'Mật khẩu': '123', 'Email': 'anh@coogo.vn.com', 'Điện thoại': '0912345005', 'Ảnh đại diện': '', 'Vai trò': 'Member', 'ID Phòng ban': 'pb_002', 'Ngày tạo': _iso(-48) },
-        { 'ID': 'nv_006', 'Họ tên': 'Vũ Thanh Mai', 'Tên đăng nhập': 'mai', 'Mật khẩu': '123', 'Email': 'mai@coogo.vn.com', 'Điện thoại': '0912345006', 'Ảnh đại diện': '', 'Vai trò': 'Leader', 'ID Phòng ban': 'pb_003', 'Ngày tạo': _iso(-54) },
+        { 'ID': 'nv_006', 'Họ tên': 'Vũ Thanh Mai', 'Tên đăng nhập': 'mai', 'Mật khẩu': '123', 'Email': 'mai@coogo.vn.com', 'Điện thoại': '0912345006', 'Ảnh đại diện': '', 'Vai trò': 'Manager', 'ID Phòng ban': 'pb_003', 'Ngày tạo': _iso(-54) },
         { 'ID': 'nv_007', 'Họ tên': 'Đỗ Văn Khải', 'Tên đăng nhập': 'khai', 'Mật khẩu': '123', 'Email': 'khai@coogo.vn.com', 'Điện thoại': '0912345007', 'Ảnh đại diện': '', 'Vai trò': 'Member', 'ID Phòng ban': 'pb_003', 'Ngày tạo': _iso(-45) },
-        { 'ID': 'nv_008', 'Họ tên': 'Bùi Kim Ngân', 'Tên đăng nhập': 'ngan', 'Mật khẩu': '123', 'Email': 'ngan@coogo.vn.com', 'Điện thoại': '0912345008', 'Ảnh đại diện': '', 'Vai trò': 'Leader', 'ID Phòng ban': 'pb_004', 'Ngày tạo': _iso(-52) }
+        { 'ID': 'nv_008', 'Họ tên': 'Bùi Kim Ngân', 'Tên đăng nhập': 'ngan', 'Mật khẩu': '123', 'Email': 'ngan@coogo.vn.com', 'Điện thoại': '0912345008', 'Ảnh đại diện': '', 'Vai trò': 'Manager', 'ID Phòng ban': 'pb_004', 'Ngày tạo': _iso(-52) }
     ];
     _bulkWrite(empSheet, empHeaders, emps);
 
@@ -2083,24 +2143,9 @@ function getCoreData(userRole, userId, userDeptId) {
         return { id: p['ID'], name: p['Tên dự án'], color: p['Màu sắc'] || '#6366f1' };
     });
     
-    var filteredTasks = tasksRaw;
-    if (userRole === 'Member') {
-        filteredTasks = tasksRaw.filter(function(t) {
-            var rawVal = (t['ID Người thực hiện'] || '').toString();
-            var ids = rawVal.split(',').map(function(id) { return id.trim(); });
-            return ids.indexOf(String(userId).trim()) > -1;
-        });
-    } else if (userRole === 'Leader') {
-        var leaderDeptIds2 = parseIds(userDeptId);
-        var leaderUid2 = String(userId).trim();
-        filteredTasks = tasksRaw.filter(function(t) {
-            var taskDeptId = String(t['ID Phòng ban'] || '').trim();
-            var creatorId = String(t['ID Người tạo'] || '').trim();
-            var aIds = (t['ID Người thực hiện'] || '').toString().split(',').map(function(x) { return x.trim(); });
-            return leaderDeptIds2.indexOf(taskDeptId) > -1 || creatorId === leaderUid2 || aIds.indexOf(leaderUid2) > -1;
-        });
-    }
-    
+    var scope = getScope(userRole, userId, userDeptId);
+    var filteredTasks = tasksRaw.filter(function(t) { return canSeeTask(t, scope); });
+
     var tasks = filteredTasks.map(function(t) {
         var assigneeIdStr = (t['ID Người thực hiện'] || '').toString();
         var assigneeIds = assigneeIdStr ? assigneeIdStr.split(',').map(function(id) { return id.trim(); }) : [];
@@ -2420,4 +2465,421 @@ function parseTaskWithGemini(prompt, employees, categories, projects) {
     } catch (e) {
         throw new Error("Lỗi phân tích cú pháp kết quả AI: " + e.toString() + "\nRaw response: " + responseText);
     }
+}
+
+// Chạy tay trong Apps Script editor để xem sheet đang thực sự lưu giá trị vai trò nào.
+// Dùng khi nghi ngờ có người sửa tay cột 'Vai trò' -> lệch chuỗi -> sai quyền/mất menu.
+function auditEmployeeRoles() {
+    var emps = getSheetData(SHEET_NAMES.EMPLOYEES);
+    var counts = {};
+    emps.forEach(function(e) {
+        var raw = String(e['Vai trò'] === undefined ? '' : e['Vai trò']);
+        if (!counts[raw]) counts[raw] = { raw: raw, count: 0, hieuThanh: normalizeRole(raw), khopChinhXac: !!ROLE_RANK[raw.trim()], nguoi: [] };
+        counts[raw].count++;
+        counts[raw].nguoi.push(e['Họ tên']);
+    });
+
+    var rows = Object.keys(counts).map(function(k) { return counts[k]; });
+    var canSua = rows.filter(function(r) { return !r.khopChinhXac; });
+
+    rows.forEach(function(r) {
+        console.log((r.khopChinhXac ? '[OK]   ' : '[LỆCH] ') + 'giá trị "' + r.raw + '" x' + r.count +
+            ' -> hiểu thành ' + r.hieuThanh + ' | ' + r.nguoi.join(', '));
+    });
+    if (canSua.length) {
+        console.log('>>> Có ' + canSua.length + ' giá trị không khớp chuẩn. Nên sửa lại trong sheet cho đúng: ' +
+            Object.keys(ROLE_RANK).join(' / '));
+    }
+    return { success: true, tongNhanVien: emps.length, cacGiaTri: rows, soGiaTriLech: canSua.length };
+}
+
+// ============ THÔNG BÁO NỘI BỘ (ANNOUNCEMENTS) ============
+// Trạng thái: draft | scheduled | published
+// Mức độ: normal | important | urgent (urgent = bắt buộc xác nhận đã đọc)
+// Phạm vi: all | departments | employees
+var ANN_HEADERS = [
+    'ID', 'Tiêu đề', 'Nội dung', 'Mức độ', 'Trạng thái', 'Phạm vi',
+    'ID Phòng ban nhận', 'ID Người nhận', 'Nhắc tên', 'Thẻ', 'Đính kèm',
+    'ID Người đăng', 'ID Phòng ban phát hành', 'Thời gian đăng',
+    'Đã đọc bởi', 'Đã xác nhận bởi', 'Ngày tạo', 'Ngày cập nhật'
+];
+var ANN_FILTER_HEADERS = ['ID', 'ID Nhân viên', 'Tên bộ lọc', 'Cấu hình', 'Ngày tạo'];
+
+function ensureAnnouncementSheets() {
+    var ss = getSS();
+    if (!ss.getSheetByName(SHEET_NAMES.ANNOUNCEMENTS)) {
+        _createSheet(ss, SHEET_NAMES.ANNOUNCEMENTS, ANN_HEADERS);
+    }
+    if (!ss.getSheetByName(SHEET_NAMES.SAVED_FILTERS)) {
+        _createSheet(ss, SHEET_NAMES.SAVED_FILTERS, ANN_FILTER_HEADERS);
+    }
+    return { success: true };
+}
+
+// Lấy danh sách phòng ban của 1 nhân viên (nguồn chuẩn từ sheet Nhân Viên)
+function _userDeptIds(userId) {
+    var emp = findRowByColumn(SHEET_NAMES.EMPLOYEES, 'ID', userId);
+    return emp ? parseIds(emp['ID Phòng ban']) : [];
+}
+
+// Sheets tự ép chuỗi datetime thành Date. Khi trả về client, Date bị serialize sang ISO UTC
+// làm lệch giờ lúc mở lại để sửa -> luôn chuẩn hóa về ISO kèm offset múi giờ của script.
+function _annDateStr(v) {
+    if (!v) return '';
+    if (v instanceof Date) return getLocalISOString(v);
+    return String(v);
+}
+
+// Chiều ghi: input datetime-local là "YYYY-MM-DDTHH:mm" (không có offset).
+// Chuyển sang ISO đầy đủ kèm offset để không phụ thuộc cách Sheets/JS đoán múi giờ.
+function _annParsePublishAt(v) {
+    if (!v) return '';
+    var d = (v instanceof Date) ? v : new Date(v);
+    if (isNaN(d.getTime())) return String(v);
+    return getLocalISOString(d);
+}
+
+function _annIsPublished(a, now) {
+    if (a['Trạng thái'] === 'published') return true;
+    if (a['Trạng thái'] === 'scheduled' && a['Thời gian đăng']) {
+        return new Date(a['Thời gian đăng']) <= now;
+    }
+    return false;
+}
+
+function _annVisibleTo(a, userId, deptIds) {
+    var scope = a['Phạm vi'] || 'all';
+    if (scope === 'all') return true;
+    if (scope === 'departments') {
+        var target = parseIds(a['ID Phòng ban nhận']);
+        return deptIds.some(function(d) { return target.indexOf(d) > -1; });
+    }
+    if (scope === 'employees') {
+        return parseIds(a['ID Người nhận']).indexOf(userId) > -1;
+    }
+    return false;
+}
+
+// Danh sách nhân viên thực sự nhận được thông báo
+function _annRecipientIds(a) {
+    var scope = a['Phạm vi'] || 'all';
+    if (scope === 'employees') return parseIds(a['ID Người nhận']);
+    var emps = getSheetData(SHEET_NAMES.EMPLOYEES);
+    if (scope === 'all') return emps.map(function(e) { return e['ID']; });
+    var target = parseIds(a['ID Phòng ban nhận']);
+    return emps.filter(function(e) {
+        return parseIds(e['ID Phòng ban']).some(function(d) { return target.indexOf(d) > -1; });
+    }).map(function(e) { return e['ID']; });
+}
+
+function _mapAnnouncement(a, userId) {
+    var readBy = parseIds(a['Đã đọc bởi']);
+    var confirmedBy = parseIds(a['Đã xác nhận bởi']);
+    var mentioned = parseIds(a['Nhắc tên']);
+    var attachments = [];
+    try { attachments = a['Đính kèm'] ? JSON.parse(a['Đính kèm']) : []; } catch (e) {}
+    return {
+        id: a['ID'],
+        title: a['Tiêu đề'],
+        content: a['Nội dung'],
+        priority: a['Mức độ'] || 'normal',
+        status: a['Trạng thái'] || 'draft',
+        scope: a['Phạm vi'] || 'all',
+        department_ids: parseIds(a['ID Phòng ban nhận']),
+        employee_ids: parseIds(a['ID Người nhận']),
+        mentioned_ids: mentioned,
+        tags: parseIds(a['Thẻ']),
+        attachments: attachments,
+        created_by: a['ID Người đăng'],
+        publisher_dept_id: a['ID Phòng ban phát hành'],
+        published_at: _annDateStr(a['Thời gian đăng']),
+        created_at: _annDateStr(a['Ngày tạo']),
+        updated_at: _annDateStr(a['Ngày cập nhật']),
+        read: readBy.indexOf(userId) > -1,
+        confirmed: confirmedBy.indexOf(userId) > -1,
+        mentioned_me: mentioned.indexOf(userId) > -1,
+        read_count: readBy.length,
+        confirmed_count: confirmedBy.length
+    };
+}
+
+function getAnnouncements(userRole, userId) {
+    ensureAnnouncementSheets();
+    var now = new Date();
+    var deptIds = _userDeptIds(userId);
+    var rank = roleRank(userRole);
+
+    return getSheetData(SHEET_NAMES.ANNOUNCEMENTS)
+        .filter(function(a) {
+            if (!a['ID']) return false;
+            // Owner / Giám đốc: thấy mọi thông báo
+            if (rank >= 4) return true;
+            // Người quản lý luôn thấy thông báo do chính mình đăng (kể cả nháp/hẹn giờ) để theo dõi
+            if (rank >= 2 && a['ID Người đăng'] === userId) return true;
+            return _annIsPublished(a, now) && _annVisibleTo(a, userId, deptIds);
+        })
+        .sort(function(x, y) {
+            return new Date(y['Thời gian đăng'] || y['Ngày tạo']) - new Date(x['Thời gian đăng'] || x['Ngày tạo']);
+        })
+        .map(function(a) { return _mapAnnouncement(a, userId); });
+}
+
+function createAnnouncement(data, createdBy) {
+    ensureAnnouncementSheets();
+    var id = generateId('tbnb');
+    var nowIso = getLocalISOString();
+    var status = data.status || 'published';
+    var publishAt = status === 'scheduled' ? (_annParsePublishAt(data.published_at) || nowIso) : nowIso;
+
+    appendRow(SHEET_NAMES.ANNOUNCEMENTS, {
+        'ID': id,
+        'Tiêu đề': data.title || '',
+        'Nội dung': data.content || '',
+        'Mức độ': data.priority || 'normal',
+        'Trạng thái': status,
+        'Phạm vi': data.scope || 'all',
+        'ID Phòng ban nhận': (data.department_ids || []).join(','),
+        'ID Người nhận': (data.employee_ids || []).join(','),
+        'Nhắc tên': (data.mentioned_ids || []).join(','),
+        'Thẻ': (data.tags || []).join(','),
+        'Đính kèm': data.attachments && data.attachments.length ? JSON.stringify(data.attachments) : '',
+        'ID Người đăng': createdBy,
+        'ID Phòng ban phát hành': (_userDeptIds(createdBy)[0] || ''),
+        'Thời gian đăng': status === 'draft' ? '' : publishAt,
+        'Đã đọc bởi': '',
+        'Đã xác nhận bởi': '',
+        'Ngày tạo': nowIso,
+        'Ngày cập nhật': nowIso
+    });
+
+    if (status === 'published') _pushAnnouncementToChannels(id);
+    return { success: true, id: id };
+}
+
+function updateAnnouncement(id, data) {
+    var a = findRowByColumn(SHEET_NAMES.ANNOUNCEMENTS, 'ID', id);
+    if (!a) return { success: false, message: 'Không tìm thấy thông báo' };
+
+    var updates = { 'Ngày cập nhật': getLocalISOString() };
+    if (data.title !== undefined) updates['Tiêu đề'] = data.title;
+    if (data.content !== undefined) updates['Nội dung'] = data.content;
+    if (data.priority !== undefined) updates['Mức độ'] = data.priority;
+    if (data.scope !== undefined) updates['Phạm vi'] = data.scope;
+    if (data.department_ids !== undefined) updates['ID Phòng ban nhận'] = data.department_ids.join(',');
+    if (data.employee_ids !== undefined) updates['ID Người nhận'] = data.employee_ids.join(',');
+    if (data.mentioned_ids !== undefined) updates['Nhắc tên'] = data.mentioned_ids.join(',');
+    if (data.tags !== undefined) updates['Thẻ'] = data.tags.join(',');
+    if (data.attachments !== undefined) updates['Đính kèm'] = data.attachments.length ? JSON.stringify(data.attachments) : '';
+    if (data.published_at !== undefined) updates['Thời gian đăng'] = _annParsePublishAt(data.published_at);
+
+    var wasPublished = a['Trạng thái'] === 'published';
+    if (data.status !== undefined) {
+        updates['Trạng thái'] = data.status;
+        if (data.status === 'published') {
+            // Sửa tin đã đăng thì giữ nguyên thời điểm đăng gốc;
+            // chuyển từ nháp/hẹn giờ sang đăng ngay mới lấy thời điểm hiện tại.
+            if (wasPublished) delete updates['Thời gian đăng'];
+            else updates['Thời gian đăng'] = getLocalISOString();
+        }
+    }
+
+    updateRow(SHEET_NAMES.ANNOUNCEMENTS, a._rowIndex, updates);
+
+    if (!wasPublished && data.status === 'published') _pushAnnouncementToChannels(id);
+    return { success: true };
+}
+
+function deleteAnnouncement(id) {
+    var a = findRowByColumn(SHEET_NAMES.ANNOUNCEMENTS, 'ID', id);
+    if (!a) return { success: false, message: 'Không tìm thấy thông báo' };
+    deleteRow(SHEET_NAMES.ANNOUNCEMENTS, a._rowIndex);
+    return { success: true };
+}
+
+// Ghi nhận đã đọc / đã xác nhận. Dùng LockService vì nhiều người có thể đọc cùng lúc.
+function markAnnouncementRead(id, userId, confirmed) {
+    var lock = LockService.getScriptLock();
+    try {
+        lock.waitLock(10000);
+    } catch (e) {
+        return { success: false, message: 'Hệ thống đang bận, vui lòng thử lại' };
+    }
+    try {
+        clearCache('data_v2_' + SHEET_NAMES.ANNOUNCEMENTS);
+        var a = findRowByColumn(SHEET_NAMES.ANNOUNCEMENTS, 'ID', id);
+        if (!a) return { success: false, message: 'Không tìm thấy thông báo' };
+
+        var updates = {};
+        var readBy = parseIds(a['Đã đọc bởi']);
+        if (readBy.indexOf(userId) === -1) {
+            readBy.push(userId);
+            updates['Đã đọc bởi'] = readBy.join(',');
+        }
+        if (confirmed) {
+            var confirmedBy = parseIds(a['Đã xác nhận bởi']);
+            if (confirmedBy.indexOf(userId) === -1) {
+                confirmedBy.push(userId);
+                updates['Đã xác nhận bởi'] = confirmedBy.join(',');
+            }
+        }
+        if (Object.keys(updates).length > 0) {
+            updateRow(SHEET_NAMES.ANNOUNCEMENTS, a._rowIndex, updates);
+        }
+        return { success: true };
+    } finally {
+        lock.releaseLock();
+    }
+}
+
+// Bảng theo dõi Đã đọc / Chưa đọc của 1 thông báo
+function getAnnouncementReadReport(id) {
+    var a = findRowByColumn(SHEET_NAMES.ANNOUNCEMENTS, 'ID', id);
+    if (!a) return { success: false, message: 'Không tìm thấy thông báo' };
+
+    var readBy = parseIds(a['Đã đọc bởi']);
+    var confirmedBy = parseIds(a['Đã xác nhận bởi']);
+    var recipientIds = _annRecipientIds(a);
+    var deptMap = {};
+    getSheetData(SHEET_NAMES.DEPARTMENTS).forEach(function(d) { deptMap[d['ID']] = d['Tên phòng ban']; });
+
+    var rows = getSheetData(SHEET_NAMES.EMPLOYEES)
+        .filter(function(e) { return recipientIds.indexOf(e['ID']) > -1; })
+        .map(function(e) {
+            return {
+                id: e['ID'],
+                name: e['Họ tên'],
+                avatar: e['Ảnh đại diện'] || '',
+                department: parseIds(e['ID Phòng ban']).map(function(d) { return deptMap[d] || ''; })
+                    .filter(function(x) { return x; }).join(', '),
+                read: readBy.indexOf(e['ID']) > -1,
+                confirmed: confirmedBy.indexOf(e['ID']) > -1
+            };
+        });
+
+    return {
+        success: true,
+        title: a['Tiêu đề'],
+        priority: a['Mức độ'] || 'normal',
+        total: rows.length,
+        read_count: rows.filter(function(r) { return r.read; }).length,
+        confirmed_count: rows.filter(function(r) { return r.confirmed; }).length,
+        rows: rows
+    };
+}
+
+// 1-Click gửi nhắc nhở cho những người chưa đọc
+function sendAnnouncementReminder(id) {
+    var report = getAnnouncementReadReport(id);
+    if (!report.success) return report;
+
+    var unread = report.rows.filter(function(r) { return !r.read; });
+    if (unread.length === 0) return { success: true, sent: 0, message: 'Tất cả mọi người đã đọc thông báo này' };
+
+    var appUrl = '';
+    try { appUrl = ScriptApp.getService().getUrl(); } catch (e) {}
+    var msg = '🔔 NHẮC ĐỌC THÔNG BÁO\n\n📌 ' + report.title +
+        '\n\nBạn chưa đọc thông báo này. Vui lòng xem sớm.' +
+        (appUrl ? '\n🔗 ' + appUrl + '?ann_id=' + id : '');
+
+    var sent = 0;
+    unread.forEach(function(u) {
+        try {
+            notifyEmployeeViaTelegram(u.id, msg);
+            notifyEmployeeViaZalo(u.id, msg);
+            sent++;
+        } catch (e) {
+            console.error('Reminder error for ' + u.id + ': ' + e.message);
+        }
+    });
+    return { success: true, sent: sent, message: 'Đã gửi nhắc nhở tới ' + sent + ' người' };
+}
+
+// Đẩy thông báo ra Telegram/Zalo cho đúng đối tượng nhận
+function _pushAnnouncementToChannels(id) {
+    try {
+        var a = findRowByColumn(SHEET_NAMES.ANNOUNCEMENTS, 'ID', id);
+        if (!a) return;
+
+        var appUrl = '';
+        try { appUrl = ScriptApp.getService().getUrl(); } catch (e) {}
+        var icon = a['Mức độ'] === 'urgent' ? '🚨' : (a['Mức độ'] === 'important' ? '⚠️' : '📢');
+        var plain = String(a['Nội dung'] || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        if (plain.length > 300) plain = plain.substring(0, 300) + '...';
+
+        var msg = icon + ' THÔNG BÁO NỘI BỘ\n\n📌 ' + a['Tiêu đề'] + '\n\n' + plain +
+            (appUrl ? '\n\n🔗 Xem chi tiết: ' + appUrl + '?ann_id=' + id : '');
+
+        _annRecipientIds(a).forEach(function(uid) {
+            try {
+                notifyEmployeeViaTelegram(uid, msg);
+                notifyEmployeeViaZalo(uid, msg);
+            } catch (e) {}
+        });
+    } catch (err) {
+        console.error('Push announcement error: ' + err.message);
+    }
+}
+
+// Trigger: đăng các thông báo đã tới giờ hẹn
+function publishScheduledAnnouncements() {
+    ensureAnnouncementSheets();
+    var now = new Date();
+    var published = 0;
+    getSheetData(SHEET_NAMES.ANNOUNCEMENTS).forEach(function(a) {
+        if (a['Trạng thái'] !== 'scheduled' || !a['Thời gian đăng']) return;
+        if (new Date(a['Thời gian đăng']) > now) return;
+        updateRow(SHEET_NAMES.ANNOUNCEMENTS, a._rowIndex, { 'Trạng thái': 'published' });
+        _pushAnnouncementToChannels(a['ID']);
+        published++;
+    });
+    return { success: true, published: published };
+}
+
+// Tiện ích tự tạo trigger. Cần scope script.scriptapp trong manifest; nếu project khai báo
+// oauthScopes cố định mà thiếu scope này thì hàm sẽ báo lỗi -> tạo tay qua giao diện Triggers
+// (biểu tượng đồng hồ ⏰ bên trái editor), kết quả y hệt và không phải sửa manifest.
+function setupAnnouncementTrigger() {
+    try {
+        ScriptApp.getProjectTriggers().forEach(function(t) {
+            if (t.getHandlerFunction() === 'publishScheduledAnnouncements') ScriptApp.deleteTrigger(t);
+        });
+        ScriptApp.newTrigger('publishScheduledAnnouncements').timeBased().everyMinutes(5).create();
+        return { success: true, message: 'Đã bật tự động đăng thông báo hẹn giờ (5 phút/lần)' };
+    } catch (e) {
+        var msg = 'Không tạo được trigger bằng code (thiếu quyền script.scriptapp). ' +
+            'Hãy tạo tay: mở biểu tượng đồng hồ "Triggers" ở thanh trái editor -> Add Trigger -> ' +
+            'Function: publishScheduledAnnouncements, Event source: Time-driven, ' +
+            'Type: Minutes timer, Interval: Every 5 minutes -> Save. Chi tiết lỗi: ' + e.message;
+        console.error(msg);
+        return { success: false, message: msg };
+    }
+}
+
+// ============ BỘ LỌC ĐÃ LƯU (SAVED SEARCH FILTERS) ============
+function getSavedFilters(userId) {
+    ensureAnnouncementSheets();
+    return getSheetData(SHEET_NAMES.SAVED_FILTERS)
+        .filter(function(f) { return f['ID Nhân viên'] === userId; })
+        .map(function(f) {
+            var config = {};
+            try { config = f['Cấu hình'] ? JSON.parse(f['Cấu hình']) : {}; } catch (e) {}
+            return { id: f['ID'], name: f['Tên bộ lọc'], config: config, created_at: f['Ngày tạo'] };
+        });
+}
+
+function saveFilter(userId, name, config) {
+    ensureAnnouncementSheets();
+    var id = generateId('bl');
+    appendRow(SHEET_NAMES.SAVED_FILTERS, {
+        'ID': id, 'ID Nhân viên': userId, 'Tên bộ lọc': name,
+        'Cấu hình': JSON.stringify(config || {}), 'Ngày tạo': getLocalISOString()
+    });
+    return { success: true, id: id };
+}
+
+function deleteSavedFilter(id) {
+    var f = findRowByColumn(SHEET_NAMES.SAVED_FILTERS, 'ID', id);
+    if (!f) return { success: false, message: 'Không tìm thấy bộ lọc' };
+    deleteRow(SHEET_NAMES.SAVED_FILTERS, f._rowIndex);
+    return { success: true };
 }
