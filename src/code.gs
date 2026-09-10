@@ -204,6 +204,11 @@ function parseIds(str) {
 //   Leader   : teamlead, phạm vi hẹp hơn Manager, KHÔNG được tạo dự án
 //   Member   : nhân viên, chỉ thấy việc của mình
 //
+// Giao việc: KHÔNG BAO GIỜ giao ngược lên cấp trên - chỉ cấp dưới, ngang cấp, hoặc chính
+// mình. Trong giới hạn đó, Manager/Leader ngoài phòng mình chỉ giao được cho ĐẦU MỐI CÙNG
+// CẤP của phòng khác (Manager<->Manager, Leader<->Leader); đầu mối đó tự giao xuống team.
+// Xem canSeeTask / assertCanAssign.
+//
 // Toàn bộ logic "ai thấy gì / ai làm được gì" phải đi qua đây. Trước kia logic này bị
 // copy 3 bản ở getAllData/getTasks/getCoreData rồi lệch nhau, sinh lỗi phân quyền.
 var ROLE_RANK = { 'Owner': 5, 'Director': 4, 'Manager': 3, 'Leader': 2, 'Member': 1 };
@@ -234,6 +239,26 @@ function roleRank(role) {
     return ROLE_RANK[normalizeRole(role)];
 }
 
+// Chỉ mục nhân viên: id -> { deptIds, rank }. Nhiệm vụ chỉ lưu được MỘT phòng ban ở cột
+// 'ID Phòng ban', nên với việc giao chéo phòng phải tra ngược phòng ban của từng người
+// thực hiện mới biết ai được xem.
+function buildEmployeeIndex() {
+    var idx = {};
+    getSheetData(SHEET_NAMES.EMPLOYEES).forEach(function(e) {
+        var id = String(e['ID'] || '').trim();
+        if (!id) return;
+        idx[id] = { deptIds: parseIds(e['ID Phòng ban']), rank: roleRank(e['Vai trò']) };
+    });
+    return idx;
+}
+
+// Dựng chỉ mục một lần cho mỗi scope (getSheetData đã có cache nên chi phí gần bằng 0),
+// tránh đọc lại sheet trong vòng lặp filter hàng trăm dòng.
+function scopeEmpIndex(scope) {
+    if (!scope._empIndex) scope._empIndex = buildEmployeeIndex();
+    return scope._empIndex;
+}
+
 // Gói phạm vi dữ liệu của một người dùng
 function getScope(userRole, userId, userDeptId) {
     var role = normalizeRole(userRole);
@@ -249,6 +274,13 @@ function getScope(userRole, userId, userDeptId) {
     };
 }
 
+// Người này có thuộc phòng ban nào mình phụ trách không?
+function isInMyDepts(empId, scope) {
+    var emp = scopeEmpIndex(scope)[String(empId || '').trim()];
+    if (!emp) return false;
+    return emp.deptIds.some(function(d) { return scope.deptIds.indexOf(d) > -1; });
+}
+
 function canSeeTask(t, scope) {
     if (scope.seeAll) return true;
 
@@ -256,10 +288,16 @@ function canSeeTask(t, scope) {
     var assignees = parseIds(t['ID Người thực hiện']);
     var isMine = creator === scope.userId || assignees.indexOf(scope.userId) > -1;
     if (scope.selfOnly) return isMine;
+    if (isMine) return true;
 
-    // Manager/Leader: việc trong phòng mình phụ trách, hoặc việc liên quan trực tiếp tới mình
+    // Manager/Leader: việc gắn phòng mình phụ trách...
     var taskDept = String(t['ID Phòng ban'] || '').trim();
-    return scope.deptIds.indexOf(taskDept) > -1 || isMine;
+    if (scope.deptIds.indexOf(taskDept) > -1) return true;
+
+    // ...hoặc việc có người thực hiện thuộc phòng mình. Cần nhánh này vì task giao chéo
+    // phòng chỉ ghi được 1 phòng ban, phía phòng còn lại sẽ không nhận ra nếu chỉ so cột đó.
+    // Cố ý KHÔNG mở theo phòng của người tạo: bên phòng người giao chỉ đúng người tạo thấy.
+    return assignees.some(function(id) { return isInMyDepts(id, scope); });
 }
 
 // Quyền hành động. Dùng chung cho backend; frontend ẩn nút tương ứng nhưng
@@ -439,7 +477,7 @@ function getAllData(userRole, userId, userDeptId) {
     
     // Dashboard stats (computed from already-loaded data)
     var stats = computeDashboardStats(tasks, empsRaw, departments, categories, userRole);
-    
+
     return JSON.stringify({
         departments: departments,
         employees: employees,
@@ -904,8 +942,56 @@ function getTasks(userRole, userId, userDeptId) {
     }
 }
 
-function createTask(data, createdBy) {
+// Kiểm tra quyền GIAO việc dựa trên vai trò + phòng ban của người thao tác.
+// TRẦN CỨNG áp cho mọi vai trò: không giao ngược lên CẤP TRÊN. Chỉ giao được cho cấp
+// dưới, người ngang cấp, hoặc chính mình. Trần này đứng trước cả phạm vi phòng ban -
+// Leader/Manager cùng phòng với Giám đốc vẫn không giao ngược lên Giám đốc được.
+// Trong giới hạn đó:
+//   Director/Owner : còn lại giao cho ai cũng được
+//   Manager/Leader : nhân sự thuộc phòng ban mình phụ trách, cộng thêm ĐẦU MỐI CÙNG CẤP
+//                    của phòng ban khác (Manager<->Manager, Leader<->Leader) để phối hợp
+//                    liên phòng. Đầu mối đó nhận việc rồi tự giao xuống team của họ, nên
+//                    không ai với thẳng xuống nhân sự phòng khác được.
+//   Member         : chỉ chính mình
+// actorId rỗng / không có trong sheet (vd nhiệm vụ lặp do 'system' tạo, tài khoản owner gốc)
+// -> bỏ qua, không chặn.
+function assertCanAssign(actorId, assigneeIds) {
+    var ids = (assigneeIds || []).map(function(x) { return String(x).trim(); }).filter(Boolean);
+    if (!ids.length) return;
+    var actor = String(actorId || '').trim();
+    if (!actor) return;
+    var me = getSheetData(SHEET_NAMES.EMPLOYEES).find(function(e) { return String(e['ID']).trim() === actor; });
+    if (!me) return;
+    var scope = getScope(me['Vai trò'], actor, me['ID Phòng ban']);
+    if (scope.selfOnly) {
+        if (!ids.every(function(id) { return id === actor; })) {
+            throw new Error('Nhân viên chỉ được giao nhiệm vụ cho chính mình.');
+        }
+        return;
+    }
+    var index = scopeEmpIndex(scope);
+    var upward = [], offside = [];
+    ids.forEach(function(id) {
+        if (id === actor) return;
+        var emp = index[id];
+        if (!emp) { offside.push(id); return; }
+        if (emp.rank > scope.rank) { upward.push(id); return; }
+        if (scope.seeAll) return;
+        if (isInMyDepts(id, scope)) return;
+        if (emp.rank !== scope.rank) offside.push(id);
+    });
+    if (upward.length) {
+        throw new Error('Không giao được nhiệm vụ cho cấp trên. Chỉ giao cho cấp dưới, người ngang cấp hoặc chính mình.');
+    }
+    if (offside.length) {
+        var peer = scope.rank === 3 ? 'Manager' : 'Teamlead';
+        throw new Error('Bạn chỉ được giao nhiệm vụ cho nhân sự trong phòng ban mình phụ trách, hoặc cho ' + peer + ' của phòng ban khác.');
+    }
+}
+
+function createTask(data, createdBy, skipAssignCheck) {
     const assigneeIds = Array.isArray(data.assignee_ids) ? data.assignee_ids : (data.assignee_id ? [data.assignee_id] : []);
+    if (!skipAssignCheck) assertCanAssign(createdBy, assigneeIds);
     const assigneeIdStr = assigneeIds.join(',');
 
     // Auto-fill department if missing
@@ -969,6 +1055,11 @@ function updateTask(id, data, userRole, userId) {
     } else if (data.assignee_id) {
         newAssigneeIds = [data.assignee_id];
         updates['ID Người thực hiện'] = data.assignee_id;
+    }
+
+    // Chỉ kiểm tra quyền với người MỚI được thêm vào; người đã có sẵn thì giữ nguyên.
+    if (data.assignee_ids || data.assignee_id) {
+        assertCanAssign(userId, newAssigneeIds.filter(function(id) { return oldAssigneeIds.indexOf(id) === -1; }));
     }
 
     if (data.department_id) updates['ID Phòng ban'] = data.department_id;
@@ -2338,7 +2429,7 @@ function createRecurringTasks() {
                 due_date: newDueDateStr,
                 checklist: newChecklist,
                 tags: task['Tags'] || ''
-            }, task['ID Người tạo'] || 'system');
+            }, task['ID Người tạo'] || 'system', true);
             
             updateRow(SHEET_NAMES.TASKS, task._rowIndex, { 'Lần chạy cuối': todayStr });
         }

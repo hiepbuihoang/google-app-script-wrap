@@ -1959,7 +1959,7 @@
                                 </select>
                                 <select v-model="taskFilter.department_id" class="form-select text-sm">
                                     <option value="all">Tất cả phòng ban</option>
-                                    <option v-for="d in data.departments" :key="d.id" :value="d.id">{{ d.name }}</option>
+                                    <option v-for="d in visibleTaskDepartments" :key="d.id" :value="d.id">{{ d.name }}</option>
                                 </select>
                                 <select v-model="taskFilter.category_id" class="form-select text-sm">
                                     <option value="all">Tất cả Workflow</option>
@@ -2148,7 +2148,7 @@
                                 </span>
                                 <select v-model="progressFilter.assigneeId" class="filter-select" :class="{'has-value': progressFilter.assigneeId}">
                                     <option value="">Tất cả người thực hiện</option>
-                                    <option v-for="e in data.employees" :key="e.id" :value="e.id">{{ e.name }}</option>
+                                    <option v-for="e in visibleTaskAssignees" :key="e.id" :value="e.id">{{ e.name }}</option>
                                 </select>
                                 <select v-model="progressFilter.status" class="filter-select" :class="{'has-value': progressFilter.status !== 'all'}">
                                     <option value="all">Tất cả trạng thái</option>
@@ -4612,10 +4612,20 @@
                         </div>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div class="form-group col-span-2">
-                                <label class="form-label">Người thực hiện <span class="text-red-500">*</span></label>
+                                <div class="flex items-center justify-between gap-2 flex-wrap" style="margin-bottom: 8px;">
+                                    <label class="form-label" style="margin-bottom: 0;">Người thực hiện <span class="text-red-500">*</span></label>
+                                    <select v-if="assignableDepartments.length > 1" v-model="taskAssigneeDeptFilter"
+                                        class="form-select !w-auto !py-1.5 !pl-3 !pr-9 !text-xs !rounded-lg max-w-[60%]">
+                                        <option value="all">Tất cả phòng ban</option>
+                                        <option v-for="d in assignableDepartments" :key="d.id" :value="d.id">{{ d.name }}</option>
+                                    </select>
+                                </div>
                                 <div class="bg-slate-50 rounded-xl border border-slate-200 p-3 max-h-40 overflow-y-auto custom-scrollbar" :class="{'border-red-500': modalErrors.assignee_ids}">
+                                    <p v-if="assignableEmployees.length === 0" class="text-xs text-slate-400 py-1">
+                                        {{ myRank < 2 ? 'Bạn chỉ có thể giao nhiệm vụ cho chính mình.' : (taskAssigneeDeptFilter !== 'all' ? 'Không có nhân viên nào trong phòng ban đã chọn.' : 'Chưa có nhân viên nào trong phòng ban bạn phụ trách.') }}
+                                    </p>
                                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                        <label v-for="e in data.employees" :key="e.id" class="flex items-center gap-3 p-2 rounded-lg hover:bg-white transition cursor-pointer border border-transparent hover:border-slate-100 shadow-none hover:shadow-sm">
+                                        <label v-for="e in assignableEmployees" :key="e.id" class="flex items-center gap-3 p-2 rounded-lg hover:bg-white transition cursor-pointer border border-transparent hover:border-slate-100 shadow-none hover:shadow-sm">
                                             <input type="checkbox" :value="e.id" v-model="modal.data.assignee_ids" class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500">
                                             <div class="flex items-center gap-2 overflow-hidden">
                                                 <div class="w-6 h-6 rounded-full bg-brand-100 flex items-center justify-center text-[10px] font-bold text-brand-600 overflow-hidden flex-shrink-0">
@@ -4623,6 +4633,9 @@
                                                     <span v-else>{{ e.name.charAt(0) }}</span>
                                                 </div>
                                                 <span class="text-xs text-slate-700 truncate font-medium">{{ e.name }}</span>
+                                                <span v-if="isCrossDeptAssignee(e)"
+                                                    class="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 flex-shrink-0 max-w-[90px] truncate"
+                                                    :title="'Đầu mối phòng ' + employeeDeptNames(e)">{{ employeeDeptNames(e) }}</span>
                                             </div>
                                         </label>
                                     </div>
@@ -5913,6 +5926,8 @@
                 const searchQuery = ref(''), taskFilter = reactive({ status: 'all', priority: 'all', department_id: 'all', assignee_id: 'all', category_id: 'all', project_id: 'all', dueRange: 'all' })
                 const taskSort = reactive({ field: 'created_at', order: 'desc' })
                 const showFilterBar = ref(false)
+                // Lọc danh sách "Người thực hiện" trong modal nhiệm vụ theo phòng ban
+                const taskAssigneeDeptFilter = ref('all')
                 const darkMode = ref(localStorage.getItem('darkMode') === 'true')
                 const toggleDarkMode = () => { darkMode.value = !darkMode.value; localStorage.setItem('darkMode', darkMode.value); if(darkMode.value) document.documentElement.classList.add('dark'); else document.documentElement.classList.remove('dark'); }
                 // Apply saved dark mode on load
@@ -6538,26 +6553,100 @@
                     var raw = currentUser.value.department_id || ''
                     return String(raw).split(',').map(x => x.trim()).filter(Boolean)
                 })
-                // Tab Nhân viên hiển thị theo phạm vi: Teamlead/Manager chỉ thấy người trong
-                // phòng mình phụ trách, Giám đốc/Owner thấy toàn bộ.
+                const empDeptIds = (e) => (e && e.department_ids && e.department_ids.length)
+                    ? e.department_ids
+                    : (e && e.department_id ? [e.department_id] : [])
+
+                // Phạm vi nhân sự của Manager/Leader: người trong phòng mình phụ trách, CỘNG
+                // ĐẦU MỐI CÙNG CẤP của phòng khác (Manager thấy mọi Manager, Leader thấy mọi
+                // Leader kể cả khác phòng ban). Khớp assertCanAssign bên code.gs, để "thấy ai"
+                // và "giao việc được cho ai" luôn là cùng một tập.
+                const isInMyPeopleScope = (e) => {
+                    if (!currentUser.value || !e) return false
+                    if (e.id === currentUser.value.id) return true
+                    if (empDeptIds(e).some(function(d) { return myDeptIds.value.indexOf(d) > -1 })) return true
+                    return roleRank(e.role) === myRank.value
+                }
+                // Tab Nhân viên hiển thị theo phạm vi trên; Giám đốc/Owner thấy toàn bộ.
                 // Lưu ý: data.employees vẫn giữ đủ danh bạ để render tên/avatar người thực hiện
                 // trên thẻ nhiệm vụ - chỉ lọc ở khâu hiển thị danh sách này.
                 const employeesInMyScope = computed(() => {
                     if (myRank.value >= 4) return data.employees          // Owner, Giám đốc
                     if (myRank.value < 2) return []                        // Nhân viên không vào tab này
-                    var mine = myDeptIds.value
-                    if (!mine.length) return []
-                    return data.employees.filter(function(e) {
-                        var ids = (e.department_ids && e.department_ids.length)
-                            ? e.department_ids
-                            : (e.department_id ? [e.department_id] : [])
-                        return ids.some(function(d) { return mine.indexOf(d) > -1 })
-                    })
+                    return data.employees.filter(isInMyPeopleScope)
                 })
+
+                // Người mà mình được phép GIAO việc trong form Tạo/Cập nhật nhiệm vụ.
+                // Trần cứng trước tiên: KHÔNG giao ngược lên cấp trên, chỉ cấp dưới / ngang cấp /
+                // chính mình - nên Leader, Manager cùng phòng với Giám đốc vẫn không chọn được
+                // Giám đốc. Trong giới hạn đó:
+                //   Member         -> chỉ chính mình
+                //   Leader/Manager -> đúng phạm vi isInMyPeopleScope ở trên
+                //   Director/Owner -> còn lại chọn ai cũng được
+                // Phải khớp assertCanAssign bên code.gs.
+                const canAssignTo = (e) => {
+                    if (!currentUser.value || !e) return false
+                    if (e.id === currentUser.value.id) return true
+                    if (myRank.value < 2) return false
+                    if (roleRank(e.role) > myRank.value) return false
+                    if (myRank.value >= 4) return true
+                    return isInMyPeopleScope(e)
+                }
+                const assignableEmployeesAll = computed(() => {
+                    if (!currentUser.value) return []
+                    return data.employees.filter(canAssignTo)
+                })
+                // Phòng ban cho ô lọc cạnh "Người thực hiện": đúng những phòng đang có người
+                // mình giao được, nên Manager/Leader lọc được cả phòng của đầu mối cùng cấp.
+                const assignableDepartments = computed(() => {
+                    if (!currentUser.value || myRank.value < 2) return []
+                    var present = {}
+                    assignableEmployeesAll.value.forEach(function(e) {
+                        empDeptIds(e).forEach(function(d) { present[d] = true })
+                    })
+                    return data.departments.filter(function(d) { return present[d.id] })
+                })
+                // Khi sửa nhiệm vụ vẫn giữ lại người đã được giao từ trước dù ngoài phạm vi/bộ lọc,
+                // để lưu lại không vô tình gỡ họ ra. Backend (assertCanAssign) vẫn kiểm tra lại.
+                const assignableEmployees = computed(() => {
+                    var list = assignableEmployeesAll.value.slice()
+                    var dept = taskAssigneeDeptFilter.value
+                    if (dept && dept !== 'all' && myRank.value >= 2) {
+                        list = list.filter(function(e) { return empDeptIds(e).indexOf(dept) > -1 })
+                    }
+                    var picked = (modal.type === 'task' && modal.data && modal.data.assignee_ids) || []
+                    picked.forEach(function(id) {
+                        if (!list.some(function(e) { return e.id === id })) {
+                            var emp = data.employees.find(function(e) { return e.id === id })
+                            if (emp) list.push(emp)
+                        }
+                    })
+                    return list
+                })
+                // Người ngoài phòng mình phụ trách (đầu mối cùng cấp phòng khác) -> gắn nhãn
+                // phòng ban để không lẫn với nhân sự của mình.
+                const isCrossDeptAssignee = (e) => {
+                    if (!currentUser.value || myRank.value < 2 || myRank.value >= 4) return false
+                    var mine = myDeptIds.value
+                    return !empDeptIds(e).some(function(d) { return mine.indexOf(d) > -1 })
+                }
                 const filteredEmployees = computed(() => {
                     var list = employeesInMyScope.value
                     if (!searchQuery.value) return list
                     return list.filter(e => e.name.toLowerCase().includes(searchQuery.value.toLowerCase()))
+                })
+                // Tuỳ chọn bộ lọc chỉ liệt kê phòng ban / người thực hiện thực sự có mặt trong
+                // các nhiệm vụ mình được xem (data.tasks đã lọc theo quyền ở backend), thay vì
+                // đổ toàn bộ danh bạ ra rồi chọn phải mục luôn trả về 0 kết quả.
+                const visibleTaskDepartments = computed(() => {
+                    var ids = {}
+                    data.tasks.forEach(function(t) { if (t.department_id) ids[t.department_id] = true })
+                    return data.departments.filter(function(d) { return ids[d.id] })
+                })
+                const visibleTaskAssignees = computed(() => {
+                    var ids = {}
+                    data.tasks.forEach(function(t) { (t.assignee_ids || []).forEach(function(id) { ids[id] = true }) })
+                    return data.employees.filter(function(e) { return ids[e.id] })
                 })
                 const filteredTasks = computed(() => {
                     let t = [...data.tasks];
@@ -7670,7 +7759,7 @@
                     try {
                         var parsedData = await api.parseTaskWithGemini(
                             aiPrompt.value.trim(),
-                            data.employees,
+                            assignableEmployeesAll.value,
                             data.categories,
                             data.projects
                         )
@@ -7678,7 +7767,10 @@
                         if (parsedData) {
                             if (parsedData.title) modal.data.title = parsedData.title;
                             if (parsedData.description) modal.data.description = parsedData.description;
-                            if (parsedData.assignee_ids) modal.data.assignee_ids = parsedData.assignee_ids;
+                            if (parsedData.assignee_ids) {
+                                var allowed = assignableEmployeesAll.value.map(function(e) { return e.id });
+                                modal.data.assignee_ids = parsedData.assignee_ids.filter(function(id) { return allowed.indexOf(id) > -1 });
+                            }
                             if (parsedData.category_id) modal.data.category_id = parsedData.category_id;
                             if (parsedData.project_id) modal.data.project_id = parsedData.project_id;
                             if (parsedData.priority) modal.data.priority = parsedData.priority;
@@ -7851,6 +7943,7 @@
                 const openModal = (type, d = null) => {
                     modal.type = type
                     Object.keys(modalErrors).forEach(k => modalErrors[k] = '')
+                    if (type === 'task') taskAssigneeDeptFilter.value = 'all'
                     if (d) {
                         var cloned = { ...d }
                         // For tasks, map nested fields to flat IDs for the form
@@ -7885,7 +7978,9 @@
                         }
                     }
                     else if (type === 'task') {
-                        modal.data = { priority: 'medium', due_date: getLocalDateString(), assignee_ids: [], project_id: '', recurrence: 'none' };
+                        // Member chỉ giao được cho chính mình -> chọn sẵn luôn cho tiện
+                        var selfOnly = myRank.value < 2 && currentUser.value ? [currentUser.value.id] : [];
+                        modal.data = { priority: 'medium', due_date: getLocalDateString(), assignee_ids: selfOnly, project_id: '', recurrence: 'none' };
                         aiPrompt.value = '';
                         showAIHelper.value = false;
                         if (isRecording.value && recognition) {
@@ -8751,7 +8846,8 @@
                     promptDialog, handlePromptOk, handlePromptCancel,
                     myRank, roleRank, roleLabel, roleIcon, roleBadgeClass, assignableRoles,
                     setEmployeeRole, toggleEmployeeDept, selectedDeptNames, employeeDeptNames,
-                    canAccessPage, employeesInMyScope,
+                    canAccessPage, employeesInMyScope, assignableEmployees, assignableDepartments, taskAssigneeDeptFilter, isCrossDeptAssignee,
+                    visibleTaskDepartments, visibleTaskAssignees,
                     annFilter, annQuickTabs, annTabCounts, annTagOptions, toggleAnnTag, showAnnAdvanced, annAdvancedCount, resetAnnFilters,
                     filteredAnnouncements, annUnreadCount, bannerAnnouncement, dismissBanner, canPublishAnnouncement,
                     stripHtml, formatDateTime, employeeName, toggleArrayItem,
