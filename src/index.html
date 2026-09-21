@@ -3608,6 +3608,14 @@
                                                 <iconify-icon icon="solar:lock-password-linear" width="20" class="form-icon text-slate-400"></iconify-icon>
                                             </div>
                                         </div>
+                                        <div class="form-group">
+                                            <label class="form-label text-slate-600 font-semibold text-xs uppercase tracking-wider">Nhập lại mật khẩu mới</label>
+                                            <div class="relative">
+                                                <input v-model="profileForm.confirmPassword" type="password"
+                                                    class="form-input pl-12 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-all rounded-xl" placeholder="Nhập lại mật khẩu mới">
+                                                <iconify-icon icon="solar:lock-password-linear" width="20" class="form-icon text-slate-400"></iconify-icon>
+                                            </div>
+                                        </div>
                                         <div class="pt-4 border-t border-slate-100 flex justify-end">
                                             <button @click="updateProfile" class="btn btn-primary px-6 flex items-center gap-2 hover:-translate-y-0.5 active:translate-y-0 transition-all shadow-md shadow-brand-500/20">
                                                 <iconify-icon icon="solar:diskette-bold" width="18"></iconify-icon>
@@ -4310,8 +4318,44 @@
 
                     <!-- Assignees -->
                     <div class="space-y-3">
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400">Người thực hiện</h4>
-                        <div class="flex flex-wrap gap-3">
+                        <div class="flex items-center justify-between gap-2 flex-wrap">
+                            <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400">Người thực hiện</h4>
+                            <button v-if="!reassign.open" @click="openReassign" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1">
+                                <iconify-icon icon="solar:users-group-rounded-bold" width="14"></iconify-icon> Giao lại
+                            </button>
+                            <select v-else-if="assignableDepartments.length > 1" v-model="reassign.dept"
+                                class="form-select !w-auto !py-1.5 !pl-3 !pr-9 !text-xs !rounded-lg max-w-[60%]">
+                                <option value="all">Tất cả phòng ban</option>
+                                <option v-for="d in assignableDepartments" :key="'rad-' + d.id" :value="d.id">{{ d.name }}</option>
+                            </select>
+                        </div>
+                        <div v-if="reassign.open" class="space-y-3">
+                            <div class="bg-slate-50 rounded-xl border border-slate-200 p-3 max-h-40 overflow-y-auto custom-scrollbar">
+                                <p v-if="reassignOptions.length === 0" class="text-xs text-slate-400 py-1">
+                                    {{ reassign.dept !== 'all' ? 'Không có nhân viên nào trong phòng ban đã chọn.' : 'Chưa có nhân viên nào trong phòng ban bạn phụ trách.' }}
+                                </p>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <label v-for="e in reassignOptions" :key="'ra-' + e.id" class="flex items-center gap-3 p-2 rounded-lg hover:bg-white transition cursor-pointer border border-transparent hover:border-slate-100 shadow-none hover:shadow-sm">
+                                        <input type="checkbox" :value="e.id" v-model="reassign.ids" :disabled="isReassignLocked(e)" class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500">
+                                        <div class="flex items-center gap-2 overflow-hidden">
+                                            <div class="w-6 h-6 rounded-full bg-brand-100 flex items-center justify-center text-[10px] font-bold text-brand-600 overflow-hidden flex-shrink-0">
+                                                <img v-if="e.avatar" :src="e.avatar" class="w-full h-full object-cover">
+                                                <span v-else>{{ e.name.charAt(0) }}</span>
+                                            </div>
+                                            <span class="text-xs text-slate-700 truncate font-medium">{{ e.name }}</span>
+                                            <span v-if="isCrossDeptAssignee(e)"
+                                                class="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 flex-shrink-0 max-w-[90px] truncate"
+                                                :title="'Đầu mối phòng ' + employeeDeptNames(e)">{{ employeeDeptNames(e) }}</span>
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="flex justify-end gap-2">
+                                <button @click="reassign.open = false" :disabled="reassign.saving" class="btn btn-secondary text-sm">Hủy</button>
+                                <button @click="saveReassign" :disabled="reassign.saving" class="btn btn-primary text-sm">{{ reassign.saving ? 'Đang lưu...' : 'Lưu' }}</button>
+                            </div>
+                        </div>
+                        <div v-else class="flex flex-wrap gap-3">
                             <div v-for="asg in (detailModal.task.assignees && detailModal.task.assignees.length > 0 ? detailModal.task.assignees : (detailModal.task.assignee ? [detailModal.task.assignee] : []))" :key="asg?.id"
                                 class="flex items-center gap-2 p-2 bg-slate-50 rounded-xl border border-slate-100 pr-4 shadow-sm">
                                 <div
@@ -4626,7 +4670,7 @@
                                     </p>
                                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                         <label v-for="e in assignableEmployees" :key="e.id" class="flex items-center gap-3 p-2 rounded-lg hover:bg-white transition cursor-pointer border border-transparent hover:border-slate-100 shadow-none hover:shadow-sm">
-                                            <input type="checkbox" :value="e.id" v-model="modal.data.assignee_ids" class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500">
+                                            <input type="checkbox" :value="e.id" v-model="modal.data.assignee_ids" :disabled="myRank < 2 && e.id === currentUser.id" class="w-4 h-4 rounded text-brand-600 focus:ring-brand-500">
                                             <div class="flex items-center gap-2 overflow-hidden">
                                                 <div class="w-6 h-6 rounded-full bg-brand-100 flex items-center justify-center text-[10px] font-bold text-brand-600 overflow-hidden flex-shrink-0">
                                                     <img v-if="e.avatar" :src="e.avatar" class="w-full h-full object-cover">
@@ -5785,6 +5829,25 @@
             return localTime.toISOString().split('T')[0];
         }
 
+        // Khoá ngày yyyy-MM-dd theo giờ máy người xem - cùng cách Gantt / danh sách nhiệm vụ đọc ngày.
+        // KHÔNG cắt chuỗi ISO theo 'T': backend trả ngày dạng UTC (00:00 ngày 8/9 giờ VN là
+        // "2026-09-07T17:00:00.000Z"), cắt chuỗi sẽ đẩy nhiệm vụ lùi 1 ngày trên Lịch.
+        function toLocalDateKey(v) {
+            const d = new Date(v);
+            return isNaN(d.getTime()) ? null : getLocalDateString(d);
+        }
+
+        // Chữ bị cắt (truncate / line-clamp-2): rê chuột hiện đủ nội dung qua title.
+        // Chỉ gắn khi chữ thực sự bị cắt; phần tử đã có title riêng thì để nguyên.
+        document.addEventListener('mouseover', function(e) {
+            const el = e.target && e.target.closest && e.target.closest('.truncate, .line-clamp-2');
+            if (!el || (el.hasAttribute('title') && !el.dataset.autoTitle)) return;
+            const clipped = el.scrollWidth > el.clientWidth + 1
+                || (el.classList.contains('line-clamp-2') && el.scrollHeight > el.clientHeight + 1);
+            if (clipped) { el.title = el.textContent.trim(); el.dataset.autoTitle = '1'; }
+            else if (el.dataset.autoTitle) { el.removeAttribute('title'); delete el.dataset.autoTitle; }
+        });
+
 
         // ===== Toast Icons Map =====
         var TOAST_ICONS = {
@@ -6378,11 +6441,15 @@
                 // Project filter and search
                 const projectSearchQuery = ref('')
                 const projectStatusFilter = ref('all')
+                // Danh sách quản lý (dự án, nhân viên, phòng ban, Workflow): mới tạo lên đầu.
+                // Bản ghi thiếu/sai ngày tạo coi như cũ nhất; sort ổn định nên giữ thứ tự gốc giữa chúng.
+                const createdTs = (x) => { var t = new Date(x && x.created_at).getTime(); return isNaN(t) ? 0 : t }
+                const newestFirst = (list) => list.slice().sort((a, b) => createdTs(b) - createdTs(a))
                 const filteredProjects = computed(() => {
                     let p = data.projects
                     if (projectStatusFilter.value !== 'all') p = p.filter(x => x.status === projectStatusFilter.value)
                     if (projectSearchQuery.value) p = p.filter(x => x.name.toLowerCase().includes(projectSearchQuery.value.toLowerCase()))
-                    return p
+                    return newestFirst(p)
                 })
                 const paginatedProjects = computed(() => {
                     var start = (pagination.projects.page - 1) * pagination.projects.perPage
@@ -6451,7 +6518,7 @@
                     var groups = []
                     var map = {}
                     filteredTimelineTasks.value.forEach(function(t) {
-                        var dateKey = t.due_date ? t.due_date.split('T')[0] : 'unknown'
+                        var dateKey = (t.due_date && toLocalDateKey(t.due_date)) || 'unknown'
                         if (!map[dateKey]) {
                             map[dateKey] = { date: dateKey, tasks: [] }
                             groups.push(map[dateKey])
@@ -6491,7 +6558,7 @@
                 const calendarTasksByDate = computed(() => {
                     var map = {}
                     filteredTimelineTasks.value.forEach(function(t) {
-                        var dateKey = t.due_date ? t.due_date.split('T')[0] : null
+                        var dateKey = t.due_date ? toLocalDateKey(t.due_date) : null
                         if (!dateKey) return
                         if (!map[dateKey]) map[dateKey] = []
                         map[dateKey].push(t)
@@ -6580,14 +6647,16 @@
                 // Trần cứng trước tiên: KHÔNG giao ngược lên cấp trên, chỉ cấp dưới / ngang cấp /
                 // chính mình - nên Leader, Manager cùng phòng với Giám đốc vẫn không chọn được
                 // Giám đốc. Trong giới hạn đó:
-                //   Member         -> chỉ chính mình
+                //   Member         -> chính mình + Member khác cùng phòng ban
                 //   Leader/Manager -> đúng phạm vi isInMyPeopleScope ở trên
                 //   Director/Owner -> còn lại chọn ai cũng được
                 // Phải khớp assertCanAssign bên code.gs.
                 const canAssignTo = (e) => {
                     if (!currentUser.value || !e) return false
                     if (e.id === currentUser.value.id) return true
-                    if (myRank.value < 2) return false
+                    if (myRank.value < 2) {
+                        return roleRank(e.role) === 1 && empDeptIds(e).some(function(d) { return myDeptIds.value.indexOf(d) > -1 })
+                    }
                     if (roleRank(e.role) > myRank.value) return false
                     if (myRank.value >= 4) return true
                     return isInMyPeopleScope(e)
@@ -6606,23 +6675,24 @@
                     })
                     return data.departments.filter(function(d) { return present[d.id] })
                 })
-                // Khi sửa nhiệm vụ vẫn giữ lại người đã được giao từ trước dù ngoài phạm vi/bộ lọc,
-                // để lưu lại không vô tình gỡ họ ra. Backend (assertCanAssign) vẫn kiểm tra lại.
-                const assignableEmployees = computed(() => {
+                // Danh sách "Người thực hiện" dùng chung cho form Tạo/Cập nhật nhiệm vụ và khung Giao lại:
+                // đúng phạm vi được giao, lọc theo phòng ban đang chọn, và luôn giữ lại người đã chọn
+                // dù ngoài phạm vi/bộ lọc để lưu lại không vô tình gỡ họ ra. Backend (assertCanAssign) vẫn kiểm tra lại.
+                const assigneeOptions = (dept, picked) => {
                     var list = assignableEmployeesAll.value.slice()
-                    var dept = taskAssigneeDeptFilter.value
                     if (dept && dept !== 'all' && myRank.value >= 2) {
                         list = list.filter(function(e) { return empDeptIds(e).indexOf(dept) > -1 })
                     }
-                    var picked = (modal.type === 'task' && modal.data && modal.data.assignee_ids) || []
-                    picked.forEach(function(id) {
+                    var keep = picked || []
+                    keep.forEach(function(id) {
                         if (!list.some(function(e) { return e.id === id })) {
                             var emp = data.employees.find(function(e) { return e.id === id })
                             if (emp) list.push(emp)
                         }
                     })
                     return list
-                })
+                }
+                const assignableEmployees = computed(() => assigneeOptions(taskAssigneeDeptFilter.value, (modal.type === 'task' && modal.data && modal.data.assignee_ids) || []))
                 // Người ngoài phòng mình phụ trách (đầu mối cùng cấp phòng khác) -> gắn nhãn
                 // phòng ban để không lẫn với nhân sự của mình.
                 const isCrossDeptAssignee = (e) => {
@@ -6631,7 +6701,7 @@
                     return !empDeptIds(e).some(function(d) { return mine.indexOf(d) > -1 })
                 }
                 const filteredEmployees = computed(() => {
-                    var list = employeesInMyScope.value
+                    var list = newestFirst(employeesInMyScope.value)
                     if (!searchQuery.value) return list
                     return list.filter(e => e.name.toLowerCase().includes(searchQuery.value.toLowerCase()))
                 })
@@ -6677,7 +6747,7 @@
                         if (sf === 'title') return so * (a.title || '').localeCompare(b.title || '');
                         if (sf === 'due_date') { var da = a.due_date ? new Date(a.due_date) : new Date('2099-12-31'); var db = b.due_date ? new Date(b.due_date) : new Date('2099-12-31'); return so * (da - db); }
                         if (sf === 'priority') { var pm = {high:3,medium:2,low:1}; return so * ((pm[b.priority]||0) - (pm[a.priority]||0)); }
-                        var da2 = a.created_at ? new Date(a.created_at) : new Date(0); var db2 = b.created_at ? new Date(b.created_at) : new Date(0); return so * (db2 - da2);
+                        var da2 = a.created_at ? new Date(a.created_at) : new Date(0); var db2 = b.created_at ? new Date(b.created_at) : new Date(0); return so * (da2 - db2); // desc (so = -1) -> mới tạo lên đầu
                     });
                     return t;
                 })
@@ -6689,7 +6759,7 @@
                     ];
                 })
                 const unreadCount = computed(() => data.notifications.filter(n => !n.read).length)
-                const filteredCategories = computed(() => searchQuery.value ? data.categories.filter(c => c.name.toLowerCase().includes(searchQuery.value.toLowerCase())) : data.categories)
+                const filteredCategories = computed(() => newestFirst(searchQuery.value ? data.categories.filter(c => c.name.toLowerCase().includes(searchQuery.value.toLowerCase())) : data.categories))
                 // Get project name for a task by project_id
                 const getProjectName = (projectId) => {
                     if (!projectId) return ''
@@ -6712,7 +6782,7 @@
                 })
                 const paginatedDepartments = computed(() => {
                     var start = (pagination.departments.page - 1) * pagination.departments.perPage
-                    return data.departments.slice(start, start + pagination.departments.perPage)
+                    return newestFirst(data.departments).slice(start, start + pagination.departments.perPage)
                 })
                 const paginatedNotifications = computed(() => {
                     var start = (pagination.notifications.page - 1) * pagination.notifications.perPage
@@ -7552,6 +7622,12 @@
                 }
                 const markRead = async (n) => { if (!n.read) { await api.markNotificationRead(n.id); n.read = true } }
                 const updateProfile = async () => {
+                    var newPwd = profileForm.newPassword || ''
+                    if (newPwd) {
+                        // Đăng nhập yêu cầu tối thiểu 3 ký tự - đặt ngắn hơn là tự khoá mình ngoài hệ thống
+                        if (newPwd.length < 3) { showToast('error', 'Mật khẩu phải từ 3 ký tự'); return }
+                        if (newPwd !== (profileForm.confirmPassword || '')) { showToast('error', 'Mật khẩu nhập lại không khớp'); return }
+                    }
                     globalLoading.value = true
                     try {
                         const id = currentUser.value.id
@@ -7567,6 +7643,7 @@
                         await fetchAllData()
                         showToast('success', 'Đã cập nhật thông tin!')
                         profileForm.newPassword = '' // Clear password field
+                        profileForm.confirmPassword = ''
                     } catch(e) { showToast('error', 'Lỗi: ' + e) }
                     finally { globalLoading.value = false }
                 }
@@ -7978,7 +8055,7 @@
                         }
                     }
                     else if (type === 'task') {
-                        // Member chỉ giao được cho chính mình -> chọn sẵn luôn cho tiện
+                        // Member bắt buộc có tên mình trong người thực hiện -> chọn sẵn (và khoá ô đó)
                         var selfOnly = myRank.value < 2 && currentUser.value ? [currentUser.value.id] : [];
                         modal.data = { priority: 'medium', due_date: getLocalDateString(), assignee_ids: selfOnly, project_id: '', recurrence: 'none' };
                         aiPrompt.value = '';
@@ -8231,6 +8308,46 @@
                 }
                 // Detail Modal Logic
                 const detailModal = reactive({ open: false, task: null, comments: [], newComment: '', files: [], tab: 'comments', history: [] });
+
+                // Giao lại người thực hiện ngay trong modal chi tiết. Danh sách dùng chung assigneeOptions
+                // với form Tạo nhiệm vụ (phạm vi quyền + ô lọc phòng ban), nên hai chỗ luôn giống hệt nhau.
+                // Member: thêm Member cùng phòng, được rút tên mình, không gỡ người khác (backend kiểm tra lại).
+                const reassign = reactive({ open: false, ids: [], dept: 'all', saving: false });
+                const reassignOptions = computed(() => assigneeOptions(reassign.dept, reassign.ids));
+                const isReassignLocked = (e) => {
+                    if (myRank.value >= 2 || !detailModal.task) return false;
+                    return e.id !== currentUser.value.id && (detailModal.task.assignee_ids || []).indexOf(e.id) > -1;
+                };
+                const openReassign = () => {
+                    reassign.ids = ((detailModal.task && detailModal.task.assignee_ids) || []).slice();
+                    reassign.dept = 'all';
+                    reassign.open = true;
+                };
+                const saveReassign = async () => {
+                    var task = detailModal.task;
+                    if (!task) return;
+                    if (!reassign.ids.length) { showToast('error', 'Vui lòng chọn ít nhất một người thực hiện'); return; }
+                    var ids = reassign.ids.slice();
+                    reassign.saving = true;
+                    try {
+                        await api.updateTask(task.id, { assignee_ids: ids }, currentUser.value.role, currentUser.value.id);
+                        var assignees = data.employees.filter(e => ids.indexOf(e.id) > -1).map(e => ({ id: e.id, name: e.name, avatar: e.avatar }));
+                        var patch = { assignee_ids: ids, assignee_id: ids.join(','), assignees: assignees, assignee: assignees[0] || null };
+                        Object.assign(task, patch);
+                        var inList = data.tasks.find(t => t.id === task.id);
+                        if (inList && inList !== task) Object.assign(inList, patch);
+                        reassign.open = false;
+                        showToast('success', 'Đã giao lại nhiệm vụ!');
+                        // Member tự rút tên khỏi việc không phải do mình tạo -> không còn quyền xem, đóng modal
+                        if (myRank.value < 2 && ids.indexOf(currentUser.value.id) === -1 && task.created_by !== currentUser.value.id) {
+                            detailModal.open = false;
+                        } else {
+                            await refreshDetailHistory();
+                        }
+                        refreshDataSilently();
+                    } catch (e) { showToast('error', 'Lỗi: ' + (e && e.message ? e.message : e)); }
+                    finally { reassign.saving = false; }
+                };
                 const isCommentSubmitting = ref(false);
                 const projectTasksModal = reactive({ open: false, project: null, tasks: [] });
                 const deptEmployeesModal = reactive({ open: false, department: null, employees: [] });
@@ -8280,6 +8397,7 @@
                     detailModal.files = [];
                     detailModal.tab = 'comments';
                     detailModal.history = [];
+                    reassign.open = false;
                     detailModal.open = true;
 
                     const requestId = ++commentRequestId;
@@ -8847,6 +8965,7 @@
                     myRank, roleRank, roleLabel, roleIcon, roleBadgeClass, assignableRoles,
                     setEmployeeRole, toggleEmployeeDept, selectedDeptNames, employeeDeptNames,
                     canAccessPage, employeesInMyScope, assignableEmployees, assignableDepartments, taskAssigneeDeptFilter, isCrossDeptAssignee,
+                    reassign, reassignOptions, isReassignLocked, openReassign, saveReassign,
                     visibleTaskDepartments, visibleTaskAssignees,
                     annFilter, annQuickTabs, annTabCounts, annTagOptions, toggleAnnTag, showAnnAdvanced, annAdvancedCount, resetAnnFilters,
                     filteredAnnouncements, annUnreadCount, bannerAnnouncement, dismissBanner, canPublishAnnouncement,
