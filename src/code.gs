@@ -300,6 +300,23 @@ function canSeeTask(t, scope) {
     return assignees.some(function(id) { return isInMyDepts(id, scope); });
 }
 
+// Member chỉ thấy dự án mình tham gia: là người phụ trách, có tên trong danh sách thành viên,
+// hoặc có nhiệm vụ mình được xem nằm trong dự án (để tên dự án trên việc của mình vẫn hiện).
+// Các vai trò khác giữ nguyên.
+function filterProjectsForScope(projects, scope, visibleTasksRaw) {
+    if (!scope.selfOnly) return projects;
+    var withMyTasks = {};
+    visibleTasksRaw.forEach(function(t) {
+        var pid = String(t['ID Dự án'] || '').trim();
+        if (pid) withMyTasks[pid] = true;
+    });
+    return projects.filter(function(p) {
+        return String(p.manager_id || '').trim() === scope.userId
+            || (p.member_ids || []).indexOf(scope.userId) > -1
+            || !!withMyTasks[String(p.id).trim()];
+    });
+}
+
 // Quyền hành động. Dùng chung cho backend; frontend ẩn nút tương ứng nhưng
 // backend vẫn phải tự kiểm tra vì ẩn ở giao diện không phải là bảo vệ.
 function can(action, scope) {
@@ -409,6 +426,7 @@ function getAllData(userRole, userId, userDeptId) {
     
     // Process tasks
     var filteredTasks = tasksRaw.filter(function(t) { return canSeeTask(t, scope); });
+    projects = filterProjectsForScope(projects, scope, filteredTasks);
 
     var tasks = filteredTasks.map(function(t) {
         var assigneeIdStr = (t['ID Người thực hiện'] || '').toString();
@@ -952,7 +970,7 @@ function getTasks(userRole, userId, userDeptId) {
 //                    của phòng ban khác (Manager<->Manager, Leader<->Leader) để phối hợp
 //                    liên phòng. Đầu mối đó nhận việc rồi tự giao xuống team của họ, nên
 //                    không ai với thẳng xuống nhân sự phòng khác được.
-//   Member         : chỉ chính mình
+//   Member         : chính mình, cộng thêm Member khác CÙNG PHÒNG BAN để phối hợp
 // actorId rỗng / không có trong sheet (vd nhiệm vụ lặp do 'system' tạo, tài khoản owner gốc)
 // -> bỏ qua, không chặn.
 function assertCanAssign(actorId, assigneeIds) {
@@ -964,9 +982,13 @@ function assertCanAssign(actorId, assigneeIds) {
     if (!me) return;
     var scope = getScope(me['Vai trò'], actor, me['ID Phòng ban']);
     if (scope.selfOnly) {
-        if (!ids.every(function(id) { return id === actor; })) {
-            throw new Error('Nhân viên chỉ được giao nhiệm vụ cho chính mình.');
-        }
+        var memberIndex = scopeEmpIndex(scope);
+        var allowed = ids.every(function(id) {
+            if (id === actor) return true;
+            var emp = memberIndex[id];
+            return !!emp && emp.rank === 1 && isInMyDepts(id, scope);
+        });
+        if (!allowed) throw new Error('Nhân viên chỉ được giao nhiệm vụ cho chính mình hoặc nhân viên cùng phòng ban.');
         return;
     }
     var index = scopeEmpIndex(scope);
@@ -989,9 +1011,32 @@ function assertCanAssign(actorId, assigneeIds) {
     }
 }
 
+// Ràng buộc riêng cho Member khi đặt danh sách người thực hiện:
+//   - Tạo mới (oldIds = null): bắt buộc có chính mình, không tạo việc rồi đẩy hẳn cho người khác.
+//   - Giao lại: được tự rút tên mình, nhưng KHÔNG gỡ người khác (việc có thể do cấp trên giao).
+// Vai trò tra từ sheet như assertCanAssign.
+function assertMemberAssigneeRules(actorId, oldIds, newIds) {
+    var clean = function(arr) { return (arr || []).map(function(x) { return String(x).trim(); }).filter(Boolean); };
+    var actor = String(actorId || '').trim();
+    if (!actor) return;
+    var me = getSheetData(SHEET_NAMES.EMPLOYEES).find(function(e) { return String(e['ID']).trim() === actor; });
+    if (!me || roleRank(me['Vai trò']) !== 1) return;
+    var next = clean(newIds);
+    if (!next.length) throw new Error('Nhiệm vụ phải có ít nhất một người thực hiện.');
+    if (oldIds === null) {
+        if (next.indexOf(actor) === -1) throw new Error('Nhân viên tạo nhiệm vụ phải có tên mình trong danh sách người thực hiện.');
+        return;
+    }
+    var removedOthers = clean(oldIds).filter(function(id) { return id !== actor && next.indexOf(id) === -1; });
+    if (removedOthers.length) throw new Error('Nhân viên chỉ được rút tên mình khỏi nhiệm vụ, không gỡ được người khác.');
+}
+
 function createTask(data, createdBy, skipAssignCheck) {
     const assigneeIds = Array.isArray(data.assignee_ids) ? data.assignee_ids : (data.assignee_id ? [data.assignee_id] : []);
-    if (!skipAssignCheck) assertCanAssign(createdBy, assigneeIds);
+    if (!skipAssignCheck) {
+        assertCanAssign(createdBy, assigneeIds);
+        assertMemberAssigneeRules(createdBy, null, assigneeIds);
+    }
     const assigneeIdStr = assigneeIds.join(',');
 
     // Auto-fill department if missing
@@ -1060,6 +1105,7 @@ function updateTask(id, data, userRole, userId) {
     // Chỉ kiểm tra quyền với người MỚI được thêm vào; người đã có sẵn thì giữ nguyên.
     if (data.assignee_ids || data.assignee_id) {
         assertCanAssign(userId, newAssigneeIds.filter(function(id) { return oldAssigneeIds.indexOf(id) === -1; }));
+        assertMemberAssigneeRules(userId, oldAssigneeIds, newAssigneeIds);
     }
 
     if (data.department_id) updates['ID Phòng ban'] = data.department_id;
@@ -2356,6 +2402,13 @@ function getExtendedData(userRole, userId, userDeptId) {
         };
     });
     
+    // Member chỉ nhận dự án mình tham gia (xem filterProjectsForScope)
+    var scope = getScope(userRole, userId, userDeptId);
+    if (scope.selfOnly) {
+        var visibleTasks = getSheetData(SHEET_NAMES.TASKS).filter(function(t) { return canSeeTask(t, scope); });
+        projects = filterProjectsForScope(projects, scope, visibleTasks);
+    }
+
     return JSON.stringify({
         departments: departments,
         employees: employees,
